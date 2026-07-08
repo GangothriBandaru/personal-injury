@@ -1,10 +1,11 @@
-import { useState, useRef, ReactNode } from "react";
+import { useState, useRef, useEffect, ReactNode } from "react";
 import {
   Scale, MapPin, CheckCircle, ShieldCheck, User, Building2, Hash, Calendar, AlertTriangle, X,
   FileText, Activity, Stethoscope, DollarSign, Sparkles,
   ArrowRight, ChevronDown, ChevronLeft, ChevronRight, Search, Eye, Lightbulb, Download,
   Gavel, MessageSquare, SlidersHorizontal,
   HeartPulse, ClipboardList, Image as ImageIcon, Video, FileSignature, Quote,
+  Pencil, RotateCcw, History, TrendingUp, TrendingDown, Info, Shield, Circle, Loader2,
 } from "lucide-react";
 import type { AnalysisFinding, CaseDocument } from "../types/case";
 import { classifyDocuments } from "../types/case";
@@ -1452,16 +1453,115 @@ const SEVERITY_MULTIPLIER: Record<string, string> = {
   Low: "0.25×–0.5×",
 };
 
+// Opposing-argument strength → pill. A strong defense argument is a risk to us.
+const DEFENSE_PILL: Record<string, string> = {
+  Strong: "pill pill-risk",
+  Moderate: "pill pill-progress",
+  Weak: "pill pill-complete",
+};
+
+// The allowable per-severity multiplier band (min–max). Presets in the editor
+// and the displayed range both derive from this.
+const SEVERITY_RANGE: Record<string, [number, number]> = {
+  Critical: [2, 3],
+  High: [1, 1.5],
+  Moderate: [0.5, 1],
+  Low: [0.25, 0.5],
+};
+
+// Format a multiplier value cleanly (2 → "2×", 1.25 → "1.25×").
+function fmtMult(m: number) {
+  return `${Number(m.toFixed(2))}×`;
+}
+
+type Severity = "Critical" | "High" | "Moderate" | "Low";
+type DamageFactor = {
+  category: string;
+  severity: Severity;
+  aiMultiplier: number;   // AI-recommended contribution to the overall multiplier
+  confidence: number;     // AI confidence %
+  docCount: number;
+  drivers: string[];      // 3–5 top contributing-evidence bullets
+  aiReasoning: string;    // narrative behind the recommendation
+  rationale: string;
+  evidence: {
+    strength: "Strong" | "Moderate" | "Limited";
+    primaryRecords: number;
+    expertOpinions: number;
+    witnessStatements: number;
+    medicalQuality: "Excellent" | "Strong" | "Adequate" | "Limited";
+  };
+  defense: { argument: string; strength: "Strong" | "Moderate" | "Weak"; rebuttal: string };
+  suggestion: { evidence: string; why: string; multiplierGain: number };
+};
+
 // Non-economic damage factors the recommended multiplier is applied to. Each
-// carries an AI-assigned severity and a one-line rationale for that severity.
-const DA_DAMAGE_FACTORS: { category: string; severity: "Critical" | "High" | "Moderate" | "Low"; rationale: string }[] = [
-  { category: "Pain & Suffering", severity: "Critical", rationale: "Treating-physician records document persistent, chronic pain requiring ongoing pain-management intervention." },
-  { category: "Emotional Distress", severity: "High", rationale: "Mental-health evaluations corroborate diagnosed anxiety and post-traumatic symptoms tied to the incident." },
-  { category: "Quality of Life", severity: "High", rationale: "Functional-capacity assessments show a sustained loss of independence in daily activities and prior hobbies." },
-  { category: "Cognitive Impairment", severity: "Critical", rationale: "Neuropsychological testing confirms measurable deficits in memory, attention, and processing speed." },
-  { category: "Physical Impairment", severity: "High", rationale: "Imaging and orthopedic findings verify permanent mobility restrictions and reduced range of motion." },
-  { category: "Dignity & Independence", severity: "Moderate", rationale: "Reliance on assistive care for routine self-care tasks meaningfully reduces personal autonomy." },
-  { category: "Family Relationship Impact", severity: "Moderate", rationale: "Family statements document caregiving burden and loss of consortium within the household." },
+// carries an AI-assigned severity, a recommended contribution, the evidence
+// behind it, and the strongest opposing argument. AI contributions sum to 9×.
+const DA_DAMAGE_FACTORS: DamageFactor[] = [
+  {
+    category: "Pain & Suffering", severity: "Critical", aiMultiplier: 2, confidence: 94, docCount: 18,
+    drivers: ["Permanent Injury", "Surgical Intervention", "Chronic Pain", "MRI Verified"],
+    aiReasoning: "Two-level cervical herniation with nerve-root compression, a completed surgical course, and treating-physician records showing persistent chronic pain place this factor at the top of the Critical band.",
+    rationale: "Treating-physician records document persistent, chronic pain requiring ongoing pain-management intervention.",
+    evidence: { strength: "Strong", primaryRecords: 11, expertOpinions: 3, witnessStatements: 4, medicalQuality: "Excellent" },
+    defense: { argument: "Insurer will likely argue pre-existing degenerative changes contributed to the cervical findings, discounting causation.", strength: "Weak", rebuttal: "Cite the pre-incident baseline MRI and the treating surgeon's causation opinion tying the herniation to the collision." },
+    suggestion: { evidence: "Pain-management specialist narrative report", why: "A dedicated specialist narrative would corroborate the permanence of chronic pain and anchor the top of the Critical band.", multiplierGain: 0.25 },
+  },
+  {
+    category: "Emotional Distress", severity: "High", aiMultiplier: 1.25, confidence: 86, docCount: 7,
+    drivers: ["Diagnosed Anxiety", "Post-Traumatic Symptoms", "Sleep Disturbance"],
+    aiReasoning: "Primary-care and counseling notes corroborate diagnosed anxiety and post-traumatic symptoms; a formal mental-health evaluation would further anchor the higher end of the band.",
+    rationale: "Mental-health evaluations corroborate diagnosed anxiety and post-traumatic symptoms tied to the incident.",
+    evidence: { strength: "Moderate", primaryRecords: 4, expertOpinions: 1, witnessStatements: 2, medicalQuality: "Adequate" },
+    defense: { argument: "Insurer will argue emotional symptoms are unquantified and lack a dedicated psychological evaluation.", strength: "Moderate", rebuttal: "Obtain a licensed psychologist's evaluation with standardized testing to convert lay complaints into diagnostic findings." },
+    suggestion: { evidence: "Mental Health Evaluation", why: "A formal psychological evaluation would quantify the distress diagnostically and strengthen Emotional Distress.", multiplierGain: 0.5 },
+  },
+  {
+    category: "Quality of Life", severity: "High", aiMultiplier: 1.25, confidence: 88, docCount: 9,
+    drivers: ["Loss of Independence", "Abandoned Hobbies", "Reduced Activity"],
+    aiReasoning: "Functional-capacity assessments show a durable loss of independence in daily activities and recreation attributable to the injuries.",
+    rationale: "Functional-capacity assessments show a sustained loss of independence in daily activities and prior hobbies.",
+    evidence: { strength: "Strong", primaryRecords: 5, expertOpinions: 2, witnessStatements: 2, medicalQuality: "Strong" },
+    defense: { argument: "Insurer will contend the plaintiff has partially resumed activities, limiting the loss claimed.", strength: "Weak", rebuttal: "Present the functional-capacity evaluation and before/after activity logs documenting the sustained limitations." },
+    suggestion: { evidence: "Day-in-the-life video", why: "A day-in-the-life record vividly documents the ongoing functional loss for a jury.", multiplierGain: 0.25 },
+  },
+  {
+    category: "Cognitive Impairment", severity: "Critical", aiMultiplier: 2, confidence: 92, docCount: 11,
+    drivers: ["Neuropsych Testing", "Memory Deficit", "Slowed Processing", "Employment Impact"],
+    aiReasoning: "Neuropsychological testing confirms measurable deficits in memory, attention, and processing speed, objectively supporting a Critical placement.",
+    rationale: "Neuropsychological testing confirms measurable deficits in memory, attention, and processing speed.",
+    evidence: { strength: "Strong", primaryRecords: 6, expertOpinions: 3, witnessStatements: 2, medicalQuality: "Excellent" },
+    defense: { argument: "Insurer will argue cognitive testing is subject to effort validity and attribute deficits to unrelated factors.", strength: "Moderate", rebuttal: "Rely on embedded validity indicators in the neuropsych battery and the neurologist's causation opinion." },
+    suggestion: { evidence: "Vocational expert assessment", why: "A vocational assessment would translate the cognitive deficits into concrete earning-capacity loss.", multiplierGain: 0.25 },
+  },
+  {
+    category: "Physical Impairment", severity: "High", aiMultiplier: 1.25, confidence: 90, docCount: 14,
+    drivers: ["Mobility Restriction", "Reduced Range of Motion", "Orthopedic Findings"],
+    aiReasoning: "Imaging and orthopedic findings verify permanent mobility restrictions and reduced range of motion consistent with the injury mechanism.",
+    rationale: "Imaging and orthopedic findings verify permanent mobility restrictions and reduced range of motion.",
+    evidence: { strength: "Strong", primaryRecords: 8, expertOpinions: 2, witnessStatements: 4, medicalQuality: "Strong" },
+    defense: { argument: "Insurer will argue impairment ratings fall within functional ranges permitting most activities.", strength: "Weak", rebuttal: "Present the AMA impairment rating and the treating orthopedist's permanency opinion." },
+    suggestion: { evidence: "Independent medical exam rebuttal", why: "A retained-expert IME rebuttal would neutralize a low defense impairment rating.", multiplierGain: 0.25 },
+  },
+  {
+    category: "Dignity & Independence", severity: "Moderate", aiMultiplier: 0.75, confidence: 79, docCount: 5,
+    drivers: ["Assistive Care", "Lost Self-Care Autonomy"],
+    aiReasoning: "Care records show reliance on assistive help for routine self-care tasks, meaningfully reducing personal autonomy.",
+    rationale: "Reliance on assistive care for routine self-care tasks meaningfully reduces personal autonomy.",
+    evidence: { strength: "Moderate", primaryRecords: 2, expertOpinions: 1, witnessStatements: 2, medicalQuality: "Adequate" },
+    defense: { argument: "Insurer will argue assistive-care needs are temporary and expected to resolve with recovery.", strength: "Moderate", rebuttal: "Present the life-care plan projecting long-term assistive-care needs beyond the recovery window." },
+    suggestion: { evidence: "Occupational therapy assessment", why: "An OT assessment documents the durable loss of self-care independence.", multiplierGain: 0.25 },
+  },
+  {
+    category: "Family Relationship Impact", severity: "Moderate", aiMultiplier: 0.5, confidence: 76, docCount: 4,
+    drivers: ["Caregiving Burden", "Loss of Consortium"],
+    aiReasoning: "Family statements document a caregiving burden and loss of consortium; corroboration is primarily lay testimony.",
+    rationale: "Family statements document caregiving burden and loss of consortium within the household.",
+    evidence: { strength: "Limited", primaryRecords: 1, expertOpinions: 0, witnessStatements: 3, medicalQuality: "Limited" },
+    defense: { argument: "Insurer will argue consortium claims rest largely on lay testimony without independent corroboration.", strength: "Strong", rebuttal: "Corroborate with a family-therapist evaluation and contemporaneous caregiving records." },
+    suggestion: { evidence: "Spousal/family declarations", why: "Sworn declarations from household members would independently corroborate the consortium loss.", multiplierGain: 0.25 },
+  },
 ];
 
 // Why LECO recommends the 9× multiplier.
@@ -1552,12 +1652,94 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
   // Shared Document Workspace (reused from Analysis/Overview). Each damage
   // category contributes a set of supporting documents; "View Evidence" opens
   // the existing Document Preview experience.
+  // Damage Computation tabs (Economic · Non-Economic) — Total stays below both.
+  const [compTab, setCompTab] = useState<"economic" | "noneconomic">("economic");
   // Damage Factors accordion — collapsed by default.
   const [damageFactorsOpen, setDamageFactorsOpen] = useState(false);
   const [wsOpen, setWsOpen] = useState(false);
   const [wsIndex, setWsIndex] = useState(0);
   const [wsView, setWsView] = useState<"preview" | "insights">("preview");
   const docForFile = buildDocResolver(documents);
+
+  // ── Damage-factor review workspace: per-factor multiplier (attorney-editable),
+  // override history, edit drawer, and expandable detail/defence sections. ──
+  const [factorMult, setFactorMult] = useState<Record<string, number>>(() =>
+    Object.fromEntries(DA_DAMAGE_FACTORS.map((f) => [f.category, f.aiMultiplier])));
+  type FactorEdit = { from: number; to: number; note: string; at: string };
+  const [factorHistory, setFactorHistory] = useState<Record<string, FactorEdit[]>>({});
+
+  // Editing happens inline inside the View Details drawer.
+  const [editMode, setEditMode] = useState(false);
+  const [draftMult, setDraftMult] = useState(0);
+  const [draftNote, setDraftNote] = useState("");
+  const [historyOpen, setHistoryOpen] = useState(false);
+  // Drawer collapsibles: AI summary / AI suggestions.
+  const [drawerReasoningOpen, setDrawerReasoningOpen] = useState(false);
+  const [drawerSuggestionOpen, setDrawerSuggestionOpen] = useState(false);
+  // When an override was last made, per factor (e.g. "Today • 3:42 PM").
+  const [modifiedAt, setModifiedAt] = useState<Record<string, string>>({});
+  const nowStamp = () => `Today • ${new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
+  // "View Details" drawer for a damage factor.
+  const [detailFactor, setDetailFactor] = useState<string | null>(null);
+  const [detailDocsOpen, setDetailDocsOpen] = useState(false);
+  // Factor-evidence Preview / Insights workspace.
+  const [factorWsCat, setFactorWsCat] = useState<string | null>(null);
+  const [factorWsView, setFactorWsView] = useState<"preview" | "insights">("preview");
+  const [factorWsFocus, setFactorWsFocus] = useState<string | null>(null);
+  const openFactorWs = (cat: string, view: "preview" | "insights") => { setFactorWsCat(cat); setFactorWsView(view); setFactorWsFocus(null); };
+  const openFactorDoc = (cat: string, docName: string) => { setFactorWsCat(cat); setFactorWsView("preview"); setFactorWsFocus(docName); };
+  const factorByCat = (cat: string) => DA_DAMAGE_FACTORS.find((f) => f.category === cat)!;
+  const currentMult = (cat: string) => factorMult[cat] ?? factorByCat(cat).aiMultiplier;
+
+  // Live recalculation — the overall multiplier is the sum of factor contributions.
+  const economicTotal = model.economicTotal;
+  const aiOverall = DA_DAMAGE_FACTORS.reduce((s, f) => s + f.aiMultiplier, 0);
+  const overallMult = DA_DAMAGE_FACTORS.reduce((s, f) => s + currentMult(f.category), 0);
+  const nonEconomicTotal = Math.round(economicTotal * overallMult);
+  const recommendedSettlement = economicTotal + nonEconomicTotal;
+  const aiRecommendedSettlement = economicTotal + Math.round(economicTotal * aiOverall);
+  const settlementForOverall = (m: number) => economicTotal + Math.round(economicTotal * m);
+  const hasOverride = (cat: string) => currentMult(cat) !== factorByCat(cat).aiMultiplier;
+  const anyOverride = DA_DAMAGE_FACTORS.some((f) => hasOverride(f.category));
+
+  // Open the View Details drawer (read mode); AI summary open, suggestions closed.
+  const openDetail = (cat: string) => {
+    setDetailFactor(cat); setEditMode(false); setDraftMult(currentMult(cat)); setDraftNote("");
+    setDrawerReasoningOpen(true); setDrawerSuggestionOpen(false); setDetailDocsOpen(false);
+  };
+  // Open the drawer straight into inline edit mode (from a card's Edit button).
+  const openEditDrawer = (cat: string) => {
+    setDetailFactor(cat); setEditMode(true); setDraftMult(currentMult(cat)); setDraftNote("");
+    setDrawerReasoningOpen(false); setDrawerSuggestionOpen(false); setDetailDocsOpen(false);
+  };
+  const startEdit = () => { if (detailFactor) { setDraftMult(currentMult(detailFactor)); setDraftNote(""); setEditMode(true); } };
+  const cancelEdit = () => setEditMode(false);
+  const saveFactorEdit = () => {
+    if (!detailFactor) return;
+    const cat = detailFactor;
+    const from = currentMult(cat);
+    const ai = factorByCat(cat).aiMultiplier;
+    if (draftMult !== from) {
+      setFactorHistory((prev) => ({ ...prev, [cat]: [...(prev[cat] ?? []), { from, to: draftMult, note: draftNote.trim(), at: nowStamp() }] }));
+      setFactorMult((prev) => ({ ...prev, [cat]: draftMult }));
+      setModifiedAt((prev) => {
+        const next = { ...prev };
+        if (draftMult === ai) delete next[cat]; else next[cat] = nowStamp();
+        return next;
+      });
+    }
+    setEditMode(false);
+  };
+  const restoreFactor = (cat: string) => {
+    const from = currentMult(cat);
+    const ai = factorByCat(cat).aiMultiplier;
+    if (from !== ai) setFactorHistory((prev) => ({ ...prev, [cat]: [...(prev[cat] ?? []), { from, to: ai, note: "Restored AI recommendation", at: nowStamp() }] }));
+    setFactorMult((prev) => ({ ...prev, [cat]: ai }));
+    setModifiedAt((prev) => { const next = { ...prev }; delete next[cat]; return next; });
+  };
+  // Draft-aware live preview while editing in the drawer.
+  const draftOverall = detailFactor ? overallMult - currentMult(detailFactor) + draftMult : overallMult;
+  const draftSettlement = settlementForOverall(draftOverall);
 
   // ── Economic line-item detail drawer (mirrors the Valuation page) ──
   // Which Economic Damages rows are expanded (reasoning + View details).
@@ -1617,6 +1799,11 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
       next.has(i) ? next.delete(i) : next.add(i);
       return next;
     });
+  // Verified Damage Evidence tabs (Economic · Non-Economic) + non-economic expand.
+  const [evidenceTab, setEvidenceTab] = useState<"economic" | "noneconomic">("economic");
+  const [neEvidenceExpand, setNeEvidenceExpand] = useState<Set<string>>(new Set());
+  const toggleNeEvidence = (cat: string) =>
+    setNeEvidenceExpand((prev) => { const n = new Set(prev); if (n.has(cat)) n.delete(cat); else n.add(cat); return n; });
 
   // Sidebar: count of verified damage-evidence documents on file.
   const evidenceDocTotal = 42;
@@ -1651,7 +1838,7 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
 
           {/* card 2 — Economic Damages */}
           <button
-            onClick={() => scrollTo(economicRef)}
+            onClick={() => { setCompTab("economic"); scrollTo(economicRef); }}
             className="rounded-xl border border-line bg-offwhite p-4 text-left transition-all hover:border-brand hover:bg-tint hover:shadow-sm"
           >
             <div className="text-xl font-bold text-ink tabular-nums">{formatUSD(model.economicTotal)}</div>
@@ -1660,10 +1847,10 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
 
           {/* card 3 — Non-Economic Damages */}
           <button
-            onClick={() => scrollTo(nonEconomicRef)}
+            onClick={() => { setCompTab("noneconomic"); scrollTo(economicRef); }}
             className="rounded-xl border border-line bg-offwhite p-4 text-left transition-all hover:border-brand hover:bg-tint hover:shadow-sm"
           >
-            <div className="text-xl font-bold text-ink tabular-nums">{formatRange(model.nonEconomicTotal)}</div>
+            <div className="text-xl font-bold text-ink tabular-nums">{formatCompact(nonEconomicTotal)}</div>
             <div className="eyebrow mt-1">Non-Economic Damages</div>
           </button>
 
@@ -1679,7 +1866,7 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
           {/* Estimated value — emphasized, below the four cards */}
           <div className="mt-auto pt-4 border-t border-line">
             <div className="eyebrow mb-1">Estimated Value</div>
-            <div className="text-2xl font-bold text-deep tabular-nums">{formatRange(model.recommendedSettlement)}</div>
+            <div className="text-2xl font-bold text-deep tabular-nums">{formatCompact(recommendedSettlement)}</div>
           </div>
 
           {/* CTA — jump to the Negligence (Non-Economic) tab */}
@@ -1702,14 +1889,14 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
           </p>
           <p className="body-text leading-relaxed">
             Based on the severity of injuries, permanent impairment, and strong liability evidence, LECO estimates{" "}
-            <strong className="font-semibold text-ink">{formatRange(model.nonEconomicTotal)}</strong> in Non-Economic Damages using a{" "}
-            <strong className="font-semibold text-ink">{multiplierRange(model.multiplier)} multiplier</strong>.
+            <strong className="font-semibold text-ink">{formatUSD(nonEconomicTotal)}</strong> in Non-Economic Damages using a{" "}
+            <strong className="font-semibold text-ink">{fmtMult(overallMult)} multiplier</strong>.
           </p>
         </div>
         <div className="bg-ink rounded-xl px-6 py-5 flex items-center justify-between gap-4">
           <div className="eyebrow text-soft">Current Projected Settlement Impact</div>
           <div className="text-white font-bold tabular-nums shrink-0" style={{ fontSize: "24px", lineHeight: 1.1, letterSpacing: "-0.02em" }}>
-            {formatRange(model.recommendedSettlement)}
+            {formatUSD(recommendedSettlement)}
           </div>
         </div>
       </div>
@@ -1723,8 +1910,33 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
           <h2 className="section-header">Damage Computation</h2>
         </div>
 
+        {/* Tabs — Economic · Non-Economic */}
+        <div className="flex items-center gap-2 mb-5">
+          {([
+            { key: "economic", label: "Economic Damages", count: ECONOMIC.length },
+            { key: "noneconomic", label: "Non-Economic Damages", count: DA_DAMAGE_FACTORS.length },
+          ] as const).map((t) => {
+            const active = compTab === t.key;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setCompTab(t.key)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                  active ? "bg-tint border-brand text-deep" : "bg-white border-line text-[#5B6B78] hover:border-soft hover:text-ink"
+                }`}
+              >
+                {t.label}
+                <span className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-semibold ${
+                  active ? "bg-brand text-white" : "bg-track text-[#5B6B78]"
+                }`}>{t.count}</span>
+              </button>
+            );
+          })}
+        </div>
+
         <div className="space-y-5">
           {/* Economic Damages — clean table, with a leading icon per line item */}
+          {compTab === "economic" && (
           <div className="border border-line rounded-xl overflow-hidden">
             <div className="bg-tint px-5 py-3 border-b border-line flex items-center justify-between gap-3">
               <h3 className="card-title">Economic Damages</h3>
@@ -1770,21 +1982,26 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
               </div>
             </div>
           </div>
+          )}
 
-          {/* Non-Economic Damages — read-only; multiplier controls live on Valuation */}
+          {/* Non-Economic Damages — interactive attorney review workspace */}
+          {compTab === "noneconomic" && (
           <div ref={nonEconomicRef} className="border border-line rounded-xl overflow-hidden scroll-mt-[176px]">
-            <div className="bg-tint px-5 py-3 border-b border-line">
+            <div className="bg-tint px-5 py-3 border-b border-line flex items-center justify-between gap-3">
               <h3 className="card-title">Non-Economic Damages</h3>
+              {anyOverride && <span className="pill pill-progress"><Pencil className="w-3.5 h-3.5" strokeWidth={1.75} /> Attorney-adjusted</span>}
             </div>
             <div className="p-5 space-y-6">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="bg-tint border border-[#D6F2F7] rounded-xl p-4">
                   <div className="eyebrow mb-1">Recommended Multiplier</div>
-                  <div className="text-2xl font-bold text-deep tabular-nums">{multiplierRange(model.multiplier)}</div>
+                  <div className="text-2xl font-bold text-deep tabular-nums">{fmtMult(overallMult)}</div>
+                  {anyOverride && <div className="text-xs text-[#8A98A3] mt-0.5">AI recommended {fmtMult(aiOverall)}</div>}
                 </div>
                 <div className="bg-tint border border-[#D6F2F7] rounded-xl p-4">
                   <div className="eyebrow mb-1">Estimated Non-Economic Damages</div>
-                  <div className="text-2xl font-bold text-ink tabular-nums">{formatRange(model.nonEconomicTotal)}</div>
+                  <div className="text-2xl font-bold text-ink tabular-nums">{formatUSD(nonEconomicTotal)}</div>
+                  {anyOverride && <div className="text-xs text-[#8A98A3] mt-0.5">AI estimate {formatCompact(economicTotal * aiOverall)}</div>}
                 </div>
               </div>
 
@@ -1794,12 +2011,12 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
                   <span className="eyebrow text-deep">Recommended Valuation Strategy</span>
                 </div>
                 <p className="body-text">
-                  LECO recommends applying a <strong className="font-semibold text-ink">{multiplierRange(model.multiplier)} multiplier</strong> to estimate{" "}
-                  <strong className="font-semibold text-ink">Non-Economic Damages</strong> based on the verified case evidence and overall case strength.
+                  LECO recommends applying a <strong className="font-semibold text-ink">{fmtMult(aiOverall)} multiplier</strong> to estimate{" "}
+                  <strong className="font-semibold text-ink">Non-Economic Damages</strong>. Review, challenge, and adjust each factor below — the estimate recalculates instantly.
                 </p>
               </div>
 
-              {/* Damage Factors — collapsible breakdown of what the multiplier covers */}
+              {/* Damage Factors — interactive review & editing */}
               <div className="border border-line rounded-xl overflow-hidden">
                 <button
                   onClick={() => setDamageFactorsOpen((v) => !v)}
@@ -1814,7 +2031,7 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
                       </span>
                     </div>
                     <p className="secondary-text mt-0.5">
-                      Factors contributing to the recommended {multiplierRange(model.multiplier)} multiplier.
+                      Review and edit each factor contributing to the {fmtMult(overallMult)} multiplier.
                     </p>
                   </div>
                   <ChevronDown
@@ -1824,33 +2041,100 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
                 </button>
 
                 {damageFactorsOpen && (
-                  <div className="border-t border-line divide-y divide-[#EAF1F4]">
-                    {DA_DAMAGE_FACTORS.map((f) => (
-                      <div key={f.category} className="px-4 py-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                            <span className="text-sm font-semibold text-ink">{f.category}</span>
-                            <span className={SEVERITY_PILL[f.severity]}>{f.severity}</span>
+                  <div className="border-t border-line bg-offwhite p-4 space-y-4">
+                    {DA_DAMAGE_FACTORS.map((f) => {
+                      const cur = currentMult(f.category);
+                      const [lo, hi] = SEVERITY_RANGE[f.severity];
+                      const overridden = hasOverride(f.category);
+                      const stamp = modifiedAt[f.category];
+                      return (
+                        <div key={f.category} className="lg-card p-5 space-y-3">
+                          {/* Header — title, severity, modified badge · multiplier + Edit */}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className="card-title">{f.category}</h4>
+                                <span className={SEVERITY_PILL[f.severity]}>{f.severity}</span>
+                                {overridden && <span className="pill pill-progress"><Pencil className="w-3 h-3" strokeWidth={1.75} /> Attorney Modified</span>}
+                              </div>
+                              <div className="flex items-center gap-2.5 mt-1 text-xs text-[#5B6B78] flex-wrap">
+                                <span>Range <span className="font-semibold text-ink tabular-nums">{fmtMult(lo)}–{fmtMult(hi)}</span></span>
+                                <span className="text-[#CBD5DD]">·</span>
+                                <span><span className="font-semibold text-ink tabular-nums">{f.docCount}</span> supporting evidence</span>
+                                {overridden && stamp && (<><span className="text-[#CBD5DD]">·</span><span className="text-deep font-medium">{stamp}</span></>)}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <div className="text-right">
+                                <div className="text-base font-bold text-ink tabular-nums">{fmtMult(cur)}</div>
+                                <div className="text-[10px] uppercase tracking-wide text-[#8A98A3]">Multiplier</div>
+                              </div>
+                              <button onClick={() => openEditDrawer(f.category)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-line text-deep text-xs font-medium hover:bg-tint transition-colors">
+                                <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} /> Edit
+                              </button>
+                            </div>
                           </div>
-                          <div className="text-right shrink-0">
-                            <div className="text-sm font-semibold text-ink tabular-nums">{SEVERITY_MULTIPLIER[f.severity]}</div>
-                            <div className="text-[10px] uppercase tracking-wide text-[#8A98A3]">Multiplier</div>
+
+                          {/* Compact summary — 2-line AI blurb + View Details */}
+                          <div className="flex items-stretch gap-3">
+                            <div className="flex-1 min-w-0 rounded-xl border border-line bg-offwhite p-3.5">
+                              <p className="secondary-text leading-relaxed line-clamp-2">{f.aiReasoning}</p>
+                            </div>
+                            <button onClick={() => openDetail(f.category)} className="shrink-0 inline-flex items-center gap-1.5 px-3.5 rounded-xl border border-line text-deep text-xs font-semibold hover:border-brand hover:bg-tint transition-colors">
+                              View Details <ArrowRight className="w-3.5 h-3.5" strokeWidth={1.75} />
+                            </button>
                           </div>
                         </div>
-                        <p className="secondary-text mt-1">{f.rationale}</p>
-                      </div>
-                    ))}
+                      );
+                    })}
 
-                    {/* Summary — combined factors → recommended multiplier → non-economic estimate */}
-                    <div className="bg-tint px-4 py-3.5 space-y-2.5">
+                    {/* Summary + version history */}
+                    <div className="rounded-xl border border-[#D6F2F7] bg-tint p-4 space-y-2.5">
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-sm font-medium text-[#5B6B78]">Recommended Multiplier</span>
-                        <span className="text-sm font-bold text-ink tabular-nums">{multiplierRange(model.multiplier)}</span>
+                        <span className="text-sm font-bold text-ink tabular-nums">{fmtMult(overallMult)}</span>
                       </div>
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-sm font-medium text-[#5B6B78]">Estimated Non-Economic Damages</span>
-                        <span className="text-sm font-bold text-ink tabular-nums">{formatRange(model.nonEconomicTotal)}</span>
+                        <span className="text-sm font-bold text-ink tabular-nums">{formatUSD(nonEconomicTotal)}</span>
                       </div>
+                      <div className="pt-2.5 border-t border-[#D6F2F7] flex items-center justify-between gap-3">
+                        <button onClick={() => setHistoryOpen((v) => !v)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-deep hover:text-ink transition-colors">
+                          <History className="w-3.5 h-3.5" strokeWidth={1.75} /> {historyOpen ? "Hide" : "View"} Edit History
+                        </button>
+                        {anyOverride && (
+                          <button onClick={() => DA_DAMAGE_FACTORS.forEach((f) => restoreFactor(f.category))} className="inline-flex items-center gap-1.5 text-xs font-semibold text-deep hover:text-ink transition-colors">
+                            <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} /> Restore All AI
+                          </button>
+                        )}
+                      </div>
+                      {historyOpen && (
+                        <div className="pt-1 space-y-2">
+                          {Object.entries(factorHistory).filter(([, h]) => h.length > 0).length === 0 ? (
+                            <p className="secondary-text">No attorney overrides yet — every factor is at its AI recommendation.</p>
+                          ) : (
+                            Object.entries(factorHistory).filter(([, h]) => h.length > 0).map(([cat, h]) => (
+                              <div key={cat} className="rounded-lg border border-line bg-white p-3">
+                                <div className="text-xs font-semibold text-ink mb-1.5">{cat}</div>
+                                <div className="space-y-1">
+                                  {h.map((e, i) => (
+                                    <div key={i} className="flex items-center gap-2 text-xs text-[#5B6B78] flex-wrap">
+                                      <span className="tabular-nums">{fmtMult(e.from)}</span>
+                                      <ArrowRight className="w-3 h-3 shrink-0" strokeWidth={1.75} />
+                                      <span className="font-semibold text-ink tabular-nums">{fmtMult(e.to)}</span>
+                                      <span className="text-[#8A98A3]">· {e.at}</span>
+                                      {e.note && <span className="truncate">— {e.note}</span>}
+                                    </div>
+                                  ))}
+                                  <div className="flex items-center gap-2 text-xs text-[#8A98A3]">
+                                    <Sparkles className="w-3 h-3 shrink-0" strokeWidth={1.75} /> AI recommendation: <span className="tabular-nums">{fmtMult(factorByCat(cat).aiMultiplier)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -1867,16 +2151,18 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
             </div>
           </div>
 
-          {/* Total Recommended Value — economic + non-economic */}
+          )}
+
+          {/* Total Estimated Settlement — stays below both tabs (recalculates live) */}
           <div className="bg-ink rounded-xl px-5 py-4 flex items-center justify-between gap-4">
             <div className="min-w-0">
-              <div className="eyebrow text-soft mb-1">Total Recommended Value</div>
+              <div className="eyebrow text-soft mb-1">Total Estimated Settlement</div>
               <div className="font-mono text-xs text-soft tabular-nums truncate">
-                {formatUSD(model.economicTotal)} <span className="text-brand">+</span> {formatRange(model.nonEconomicTotal)}
+                {formatUSD(economicTotal)} <span className="text-brand">+</span> {formatUSD(nonEconomicTotal)}
               </div>
             </div>
             <div className="text-white font-bold tabular-nums shrink-0" style={{ fontSize: "24px", lineHeight: 1.1, letterSpacing: "-0.01em" }}>
-              {formatRange(model.recommendedSettlement)}
+              {formatUSD(recommendedSettlement)}
             </div>
           </div>
         </div>
@@ -1885,9 +2171,35 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
       {/* 3 — Verified Damage Evidence (new) — one big card; each category is a bordered tile */}
       <div ref={evidenceRef} className="lg-card bg-offwhite p-6 scroll-mt-[176px]">
         <div className="mb-5">
-          <h2 className="section-header">Verified Damage Evidence</h2>
-          <p className="secondary-text mt-1 max-w-2xl">How each damage amount is supported by evidence on file. Open any category to review its documents.</p>
+          <h2 className="section-header">Verified Evidence by Damage Type</h2>
+          <p className="secondary-text mt-1 max-w-2xl">How each economic amount and non-economic factor is supported by evidence on file. Open any to review its documents.</p>
         </div>
+
+        {/* Tabs — Economic · Non-Economic */}
+        <div className="flex items-center gap-2 mb-5">
+          {([
+            { key: "economic", label: "Economic Damages", count: DAMAGE_EVIDENCE.length },
+            { key: "noneconomic", label: "Non-Economic Damages", count: DA_DAMAGE_FACTORS.length },
+          ] as const).map((t) => {
+            const active = evidenceTab === t.key;
+            return (
+              <button
+                key={t.key}
+                onClick={() => setEvidenceTab(t.key)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                  active ? "bg-tint border-brand text-deep" : "bg-white border-line text-[#5B6B78] hover:border-soft hover:text-ink"
+                }`}
+              >
+                {t.label}
+                <span className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[11px] font-semibold ${
+                  active ? "bg-brand text-white" : "bg-track text-[#5B6B78]"
+                }`}>{t.count}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {evidenceTab === "economic" && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {DAMAGE_EVIDENCE.map((d, i) => (
             <div key={d.category} className="border border-line rounded-xl bg-white p-5 flex flex-col gap-4">
@@ -1964,6 +2276,89 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
             </div>
           ))}
         </div>
+        )}
+
+        {evidenceTab === "noneconomic" && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {DA_DAMAGE_FACTORS.map((f) => {
+            const names = padDocsToCount([], f.category, f.docCount);
+            const primary = names[0];
+            const expanded = neEvidenceExpand.has(f.category);
+            return (
+              <div key={f.category} className="border border-line rounded-xl bg-white p-5 flex flex-col gap-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="eyebrow mb-1.5">Factor</div>
+                    <div className="card-title truncate">{f.category}</div>
+                    <span className={`${SEVERITY_PILL[f.severity]} mt-1.5`}>{f.severity}</span>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="eyebrow mb-1.5">Multiplier</div>
+                    <div className="text-lg font-bold text-ink tabular-nums">{fmtMult(currentMult(f.category))}</div>
+                  </div>
+                </div>
+
+                <div className="border-t border-line pt-4">
+                  <button
+                    onClick={() => toggleNeEvidence(f.category)}
+                    className="w-full flex items-center justify-between gap-2 mb-2.5 group"
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} />
+                      <span className="text-sm font-semibold text-ink">{f.docCount} Supporting Documents</span>
+                    </span>
+                    <ChevronDown className={`w-4 h-4 text-deep transition-transform ${expanded ? "rotate-180" : ""}`} strokeWidth={1.75} />
+                  </button>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={() => openFactorDoc(f.category, primary)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-offwhite px-3 py-2 text-sm text-ink cursor-pointer hover:border-brand hover:bg-tint hover:shadow-sm transition-all"
+                    >
+                      <FileText className="w-4 h-4 text-deep shrink-0" strokeWidth={1.75} />
+                      <span className="truncate max-w-[180px]">{primary}</span>
+                    </button>
+                    {f.docCount > 1 && (
+                      <button
+                        onClick={() => openFactorWs(f.category, "preview")}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-offwhite px-3 py-2 text-sm font-medium text-deep cursor-pointer hover:border-brand hover:bg-tint hover:shadow-sm transition-all"
+                      >
+                        <FileText className="w-4 h-4 shrink-0" strokeWidth={1.75} />
+                        +{f.docCount - 1} More
+                      </button>
+                    )}
+                  </div>
+                  {expanded && (
+                    <div className="mt-3 rounded-lg bg-tint border border-[#D6F2F7] p-3">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} />
+                        <span className="eyebrow text-deep">AI Summary</span>
+                      </div>
+                      <p className="secondary-text leading-relaxed">{f.aiReasoning}</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-auto border-t border-line" />
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => openFactorWs(f.category, "preview")}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-white border border-line text-ink rounded-lg text-sm font-medium hover:bg-wash transition-colors"
+                  >
+                    <Eye className="w-4 h-4" strokeWidth={1.75} /> Preview
+                  </button>
+                  <button
+                    onClick={() => openFactorWs(f.category, "insights")}
+                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-white border border-line text-deep rounded-lg text-sm font-medium hover:bg-tint transition-colors"
+                  >
+                    <Sparkles className="w-4 h-4" strokeWidth={1.75} /> Insights
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        )}
       </div>
       </div>
     </div>
@@ -2090,6 +2485,212 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
       ] } : undefined}
       initialView={ecoWsView ?? "preview"}
       onClose={() => { setEcoWsView(null); setEcoWsFocus(null); }}
+      onDownload={() => {}}
+    />
+
+    {/* ── Damage-factor "View Details" drawer (with inline edit) ── */}
+    {detailFactor && (() => {
+      const f = factorByCat(detailFactor);
+      const cur = currentMult(detailFactor);
+      const [lo, hi] = SEVERITY_RANGE[f.severity];
+      const overridden = hasOverride(detailFactor);
+      const prevForFactor = settlementForOverall(overallMult - cur + f.aiMultiplier);
+      const diff = recommendedSettlement - prevForFactor;
+      const gainSettlement = Math.round(economicTotal * f.suggestion.multiplierGain);
+      const docNames = padDocsToCount([], detailFactor, f.docCount);
+      const stamp = modifiedAt[detailFactor];
+      const presets = Array.from(new Set([lo, Math.round(((lo + hi) / 2) * 100) / 100, hi]));
+      const draftDiff = draftSettlement - recommendedSettlement;
+      const dim = editMode ? "opacity-50 pointer-events-none select-none" : "";
+      return (
+        <>
+          <div className="fixed inset-0 bg-ink/40 z-50" onClick={() => setDetailFactor(null)} />
+          <div className="fixed top-0 right-0 h-full w-[460px] max-w-[92vw] bg-white shadow-xl z-50 flex flex-col">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-line">
+              <div className="min-w-0">
+                <div className="eyebrow mb-1">{editMode ? "Editing Damage Factor" : "Damage Factor"}</div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="card-title">{f.category}</h2>
+                  <span className={SEVERITY_PILL[f.severity]}>{f.severity}</span>
+                  {overridden && <span className="pill pill-progress"><Pencil className="w-3 h-3" strokeWidth={1.75} /> Attorney Modified</span>}
+                </div>
+              </div>
+              <button onClick={() => setDetailFactor(null)} className="p-1.5 hover:bg-tint rounded-lg transition-colors shrink-0"><X className="w-5 h-5 text-[#5B6B78]" strokeWidth={1.75} /></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+              {/* Meta */}
+              <div className={`text-xs text-[#5B6B78] flex items-center gap-2.5 flex-wrap ${dim}`}>
+                <span>Range <span className="font-semibold text-ink tabular-nums">{fmtMult(lo)}–{fmtMult(hi)}</span></span>
+                <span className="text-[#CBD5DD]">·</span>
+                <span><span className="font-semibold text-ink tabular-nums">{f.docCount}</span> supporting evidence</span>
+                {overridden && stamp && (<><span className="text-[#CBD5DD]">·</span><span className="text-deep font-medium">{stamp}</span></>)}
+              </div>
+
+              {/* Multiplier — read tile OR inline editor (stays active while editing) */}
+              {editMode ? (
+                <div className="rounded-xl border-2 border-brand bg-white p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="eyebrow">Adjust Multiplier</div>
+                    <div className="text-xs text-[#8A98A3]">AI recommends <span className="font-semibold text-deep tabular-nums">{fmtMult(f.aiMultiplier)}</span></div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {presets.map((p) => (
+                      <button key={p} onClick={() => setDraftMult(p)} className={`px-3 py-1.5 rounded-lg text-sm font-semibold border tabular-nums transition-colors ${draftMult === p ? "bg-brand border-brand text-white" : "bg-white border-line text-ink hover:bg-tint"}`}>{fmtMult(p)}</button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-[#5B6B78] shrink-0">Custom</label>
+                    <input type="number" step={0.05} min={0} value={draftMult} onChange={(e) => setDraftMult(Math.max(0, Number(e.target.value) || 0))} className="w-full bg-white border border-line rounded-lg px-3 py-2 text-sm text-ink tabular-nums focus:outline-none focus:border-brand transition-colors" />
+                    <span className="text-sm text-[#5B6B78]">×</span>
+                  </div>
+                  <p className="text-xs text-[#8A98A3]">Typical {f.severity} range: {fmtMult(lo)}–{fmtMult(hi)}</p>
+                  {/* Live settlement preview */}
+                  <div className="rounded-lg bg-offwhite border border-line p-2.5 flex items-center justify-between text-xs">
+                    <span className="text-[#5B6B78]">Updated settlement</span>
+                    <span className="font-bold text-ink tabular-nums">
+                      {formatCompact(draftSettlement)}
+                      {draftDiff !== 0 && <span className={`ml-1 ${draftDiff > 0 ? "text-green-700" : "text-red-700"}`}>({draftDiff > 0 ? "+" : "−"}{formatCompact(Math.abs(draftDiff))})</span>}
+                    </span>
+                  </div>
+                  <textarea value={draftNote} onChange={(e) => setDraftNote(e.target.value)} rows={2} placeholder="Reason for override (optional)…" className="w-full bg-white border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-[#8A98A3] focus:outline-none focus:border-brand transition-colors resize-none" />
+                  {draftMult !== f.aiMultiplier && (
+                    <button onClick={() => setDraftMult(f.aiMultiplier)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-deep hover:text-ink transition-colors"><RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} /> Restore AI Recommendation ({fmtMult(f.aiMultiplier)})</button>
+                  )}
+                  <div className="flex items-center gap-2 pt-0.5">
+                    <button onClick={cancelEdit} className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-white border border-line text-ink text-sm font-medium hover:bg-wash transition-colors">Cancel</button>
+                    <button onClick={saveFactorEdit} className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg bg-brand hover:bg-deep text-white text-sm font-semibold transition-colors"><CheckCircle className="w-4 h-4" strokeWidth={1.75} /> Save</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-offwhite p-3.5">
+                  <div>
+                    <div className="eyebrow mb-0.5">Current Multiplier</div>
+                    <div className="text-xl font-bold text-ink tabular-nums">{fmtMult(cur)}</div>
+                    {overridden && <div className="text-xs text-[#8A98A3] mt-0.5">AI recommended <span className="tabular-nums">{fmtMult(f.aiMultiplier)}</span></div>}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {overridden && (
+                      <button onClick={() => restoreFactor(detailFactor)} className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-deep text-xs font-semibold hover:text-ink hover:bg-tint transition-colors"><RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} /> Restore AI</button>
+                    )}
+                    <button onClick={startEdit} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-line text-deep text-xs font-semibold hover:bg-tint transition-colors"><Pencil className="w-3.5 h-3.5" strokeWidth={1.75} /> Edit</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Everything below dims + disables while editing */}
+              <div className={`space-y-5 ${dim}`}>
+                {/* Drivers */}
+                <div>
+                  <div className="eyebrow mb-1.5">Drivers</div>
+                  <div className="flex flex-wrap gap-1.5">{f.drivers.map((d) => <span key={d} className="pill pill-neutral">{d}</span>)}</div>
+                </div>
+
+                {/* AI Summary — dropdown, explains why the multiplier + what was weighed */}
+                <div className="rounded-xl border border-line overflow-hidden">
+                  <button onClick={() => setDrawerReasoningOpen((v) => !v)} className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-wash transition-colors">
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-ink"><Sparkles className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> AI Summary</span>
+                    <ChevronDown className={`w-4 h-4 text-deep transition-transform ${drawerReasoningOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
+                  </button>
+                  {drawerReasoningOpen && (
+                    <div className="px-3.5 pb-3.5 pt-2 border-t border-line bg-tint">
+                      <p className="secondary-text leading-relaxed">
+                        <strong className="text-ink font-semibold">Why {fmtMult(f.aiMultiplier)}:</strong> LECO placed {f.category} in the {f.severity} band ({fmtMult(lo)}–{fmtMult(hi)}) after weighing {f.drivers.join(", ").toLowerCase()}. {f.aiReasoning}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* AI Suggestions — dropdown */}
+                <div className="rounded-xl border border-line overflow-hidden">
+                  <button onClick={() => setDrawerSuggestionOpen((v) => !v)} className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-wash transition-colors">
+                    <span className="flex items-center gap-1.5 text-xs font-semibold text-ink"><Sparkles className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> AI Suggestions</span>
+                    <ChevronDown className={`w-4 h-4 text-deep transition-transform ${drawerSuggestionOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
+                  </button>
+                  {drawerSuggestionOpen && (
+                    <div className="px-3.5 pb-3.5 pt-2 border-t border-line bg-offwhite space-y-2.5">
+                      <div><div className="eyebrow mb-0.5">Recommended Evidence</div><p className="text-sm text-ink font-medium">{f.suggestion.evidence}</p></div>
+                      <div><div className="eyebrow mb-0.5">Why It Strengthens the Claim</div><p className="secondary-text leading-relaxed">{f.suggestion.why}</p></div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="rounded-lg bg-white border border-line p-2.5"><div className="text-sm font-bold text-deep tabular-nums">+{f.suggestion.multiplierGain}×</div><div className="text-[10px] uppercase tracking-wide text-[#8A98A3]">Est. Multiplier Gain</div></div>
+                        <div className="rounded-lg bg-white border border-line p-2.5"><div className="text-sm font-bold text-green-700 tabular-nums">+{formatCompact(gainSettlement)}</div><div className="text-[10px] uppercase tracking-wide text-[#8A98A3]">Est. Settlement Impact</div></div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Settlement Impact (when overridden) */}
+                {overridden && (
+                  <div className="rounded-xl border border-[#D6F2F7] bg-tint p-3.5">
+                    <div className="eyebrow mb-2">Settlement Impact</div>
+                    <div className="space-y-1.5 text-sm">
+                      <div className="flex items-center justify-between gap-3"><span className="text-[#5B6B78]">AI Recommendation</span><span className="font-medium text-ink tabular-nums">{formatCompact(prevForFactor)}</span></div>
+                      <div className="flex items-center justify-between gap-3"><span className="text-[#5B6B78]">Attorney Version</span><span className="font-semibold text-ink tabular-nums">{formatCompact(recommendedSettlement)}</span></div>
+                      <div className="flex items-center justify-between gap-3 pt-1.5 border-t border-[#D6F2F7]"><span className="text-[#5B6B78]">Difference</span><span className={`font-bold tabular-nums ${diff >= 0 ? "text-green-700" : "text-red-700"}`}>{diff >= 0 ? "+" : "−"}{formatCompact(Math.abs(diff))}</span></div>
+                    </div>
+                    <button onClick={() => restoreFactor(detailFactor)} className="mt-2.5 inline-flex items-center gap-1.5 text-xs font-semibold text-deep hover:text-ink transition-colors"><RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} /> Restore AI Recommendation</button>
+                  </div>
+                )}
+
+                {/* Supporting documents — first 5, then View more */}
+                <div>
+                  <div className="eyebrow mb-2">{f.docCount} Supporting Documents</div>
+                  <div className="space-y-2">
+                    {(detailDocsOpen ? docNames : docNames.slice(0, 5)).map((n, i) => (
+                      <div key={n} className="rounded-lg border border-line bg-offwhite px-3 py-2.5 flex items-center gap-2.5">
+                        <span className="text-[10px] uppercase tracking-wide text-[#8A98A3] shrink-0">Doc {String(i + 1).padStart(2, "0")}</span>
+                        <FileText className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} />
+                        <span className="text-xs font-medium text-ink truncate flex-1">{n}</span>
+                        <button onClick={() => openFactorDoc(detailFactor, n)} className="inline-flex items-center gap-1 text-xs font-medium text-deep hover:text-ink transition-colors shrink-0"><Eye className="w-3.5 h-3.5" strokeWidth={1.75} /> Preview</button>
+                      </div>
+                    ))}
+                  </div>
+                  {docNames.length > 5 && (
+                    <button onClick={() => setDetailDocsOpen((v) => !v)} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-deep hover:text-ink transition-colors">
+                      {detailDocsOpen ? "Show less" : `View ${docNames.length - 5} more`}
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${detailDocsOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer — Preview Evidence / View Insights (disabled while editing) */}
+            <div className={`border-t border-line p-4 flex items-center gap-2 ${dim}`}>
+              <button disabled={editMode} onClick={() => openFactorWs(detailFactor, "preview")} className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg bg-white border border-line text-ink text-sm font-medium hover:bg-wash transition-colors"><Eye className="w-4 h-4" strokeWidth={1.75} /> Preview Evidence</button>
+              <button disabled={editMode} onClick={() => openFactorWs(detailFactor, "insights")} className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg bg-brand hover:bg-deep text-white text-sm font-semibold transition-colors"><Sparkles className="w-4 h-4" strokeWidth={1.75} /> View Insights</button>
+            </div>
+          </div>
+        </>
+      );
+    })()}
+
+    {/* Preview / Insights workspace for a damage factor's supporting evidence */}
+    <DocumentWorkspaceModal
+      docs={factorWsCat ? (() => {
+        const names = padDocsToCount([], factorWsCat, factorByCat(factorWsCat).docCount);
+        const ordered = factorWsFocus ? [factorWsFocus, ...names.filter((n) => n !== factorWsFocus)] : names;
+        return ordered.map((n) => docForFile(n));
+      })() : null}
+      contextPanel={factorWsCat ? { summary: [
+        { label: "Factor", value: factorWsCat },
+        { label: "Severity", value: factorByCat(factorWsCat).severity },
+        { label: "Multiplier", value: fmtMult(currentMult(factorWsCat)) },
+        { label: "Supporting Documents", value: String(factorByCat(factorWsCat).docCount) },
+      ] } : undefined}
+      insights={factorWsCat ? {
+        summary: factorByCat(factorWsCat).aiReasoning,
+        keyPoints: factorByCat(factorWsCat).drivers.map((d) => `${d} — verified in the record.`),
+        entities: [
+          { label: "Factor", value: factorWsCat },
+          { label: "Confidence", value: `${factorByCat(factorWsCat).confidence}%` },
+        ],
+        supportingDocs: padDocsToCount([], factorWsCat, factorByCat(factorWsCat).docCount),
+        confidence: { level: "High", score: factorByCat(factorWsCat).confidence },
+      } : undefined}
+      initialView={factorWsView}
+      onClose={() => { setFactorWsCat(null); setFactorWsFocus(null); }}
       onDownload={() => {}}
     />
     </>
@@ -2804,21 +3405,57 @@ export function EvidenceRepositoryTab({ documents }: TabProps) {
 
 const POLICY_LIMIT = 2_000_000;
 
-// AI-generated strategy brief — each dimension of the case in one line.
-const VALUATION_BRIEF: { label: string; icon: any; text: string }[] = [
-  { label: "Overall Case Strength", icon: ShieldCheck, text: "Strong. Objective liability evidence and verified, permanent injuries leave the defense little room to contest fault or damages." },
-  { label: "Recovery Potential", icon: DollarSign, text: "High. The recommended value sits within confirmed policy limits, making a full-corridor recovery realistic." },
-  { label: "Key Advantages", icon: CheckCircle, text: "Officer fault determination, a corroborated red-light violation, and two-level cervical herniations documented on MRI." },
-  { label: "Primary Litigation Strategy", icon: Gavel, text: "Anchor a policy-limit demand on objective liability, holding firm on economic damages while treating the multiplier as the negotiable lever." },
+// ── Corridor simulation — AI processing steps, context graph, and result ──
+const CORRIDOR_STEPS = [
+  "Reading verified case evidence…",
+  "Mapping negligence findings…",
+  "Loading jurisdiction & venue…",
+  "Analyzing insurance coverage…",
+  "Searching comparable verdicts…",
+  "Building legal context graph…",
+  "Computing settlement corridor…",
+  "Selecting optimal litigation strategy…",
 ];
 
-// Local comparable jury verdicts / settlements matched to this case profile.
-const COMPARABLE_VERDICTS: { caseName: string; amount: number; summary: string; matchScore: number; tags: string[] }[] = [
+// Context-graph nodes (positions in % of the panel) and the links between them.
+const GRAPH_NODES: { label: string; x: number; y: number }[] = [
+  { label: "Case Evidence", x: 50, y: 12 },
+  { label: "Negligence", x: 16, y: 32 },
+  { label: "Damages", x: 84, y: 32 },
+  { label: "Insurance Policy", x: 13, y: 64 },
+  { label: "Jurisdiction", x: 50, y: 47 },
+  { label: "Historical Cases", x: 87, y: 64 },
+  { label: "Settlement Strategy", x: 50, y: 84 },
+];
+const GRAPH_EDGES: [number, number][] = [[0, 4], [1, 4], [2, 4], [3, 4], [5, 4], [4, 6], [0, 1], [0, 2], [3, 6], [5, 6]];
+
+// Simulation output — the actuarial loss corridor.
+const CORRIDOR_RESULT = {
+  rapid: 242_175,
+  recommended: 1_775_950,
+  maximum: 2_663_925,
+  confidence: 94,
+  matchedCases: 12,
+};
+
+// The AI's reasoning behind the recommended strategy — the factors it weighed.
+const VALUATION_BRIEF: { label: string; icon: any; text: string }[] = [
+  { label: "Damages", icon: DollarSign, text: "Verified economic damages plus permanent, MRI-documented injuries support a high non-economic multiplier." },
+  { label: "Liability", icon: Scale, text: "Officer fault determination and a corroborated red-light violation leave little room to contest fault." },
+  { label: "Jurisdiction", icon: MapPin, text: "Cook County venue trends plaintiff-favorable for commercial-carrier intersection collisions." },
+  { label: "Precedent Matches", icon: Gavel, text: "Three closely-matched local verdicts cluster near the recommended value, anchoring the corridor." },
+  { label: "Policy Limits", icon: ShieldCheck, text: "Confirmed $2.0M commercial policy makes a full policy-informed recovery realistic and collectible." },
+];
+
+// Local comparable verdicts / settlements matched to this case profile. `labels`
+// are the short category chips shown above each card.
+const COMPARABLE_VERDICTS: { caseName: string; amount: number; summary: string; matchScore: number; labels: string[]; tags: string[] }[] = [
   {
     caseName: "Reyes v. Interstate Freight Lines",
     amount: 1_750_000,
     summary: "Commercial truck entered a controlled intersection against the signal; plaintiff sustained multi-level cervical herniations requiring ongoing care.",
     matchScore: 94,
+    labels: ["Commercial Vehicle", "Cervical Injury"],
     tags: ["Red-light violation", "Cervical injury", "Commercial carrier", "Cook County"],
   },
   {
@@ -2826,6 +3463,7 @@ const COMPARABLE_VERDICTS: { caseName: string; amount: number; summary: string; 
     amount: 1_420_000,
     summary: "Failure-to-yield collision with a delivery vehicle; disputed liability resolved on the responding officer's fault determination.",
     matchScore: 89,
+    labels: ["Commercial Vehicle", "Disputed Liability"],
     tags: ["Failure to yield", "Officer fault", "Disputed liability"],
   },
   {
@@ -2833,6 +3471,7 @@ const COMPARABLE_VERDICTS: { caseName: string; amount: number; summary: string; 
     amount: 1_180_000,
     summary: "Intersection crash producing permanent impairment; carrier policy limits framed the settlement corridor.",
     matchScore: 85,
+    labels: ["Permanent Impairment", "Policy-Limit"],
     tags: ["Permanent impairment", "Policy-limit demand", "MVA"],
   },
 ];
@@ -2854,23 +3493,44 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
     { icon: Calendar, label: "Filing Deadline", value: "Feb 14, 2028", sub: "Statute of limitations · ≈19 mo left" },
   ];
 
-  // Settlement corridor scenarios — floor, recommended target, policy ceiling.
-  const corridor = [
-    { label: "Conservative", amount: model.estimatedLow },
-    { label: "Recommended", amount: model.recommendedSettlement, highlight: true },
-    { label: "Policy Ceiling", amount: POLICY_LIMIT },
+  // The three strategy paths the AI weighed — Settlement (recommended) sits in the middle.
+  const strategyOptions = [
+    { key: "Negotiation", icon: MessageSquare, value: `${formatCompact(model.estimatedLow)} – ${formatCompact(model.recommendedSettlement)}`, desc: "Trade demands to close above the corridor midpoint.", recommended: false },
+    { key: "Settlement", icon: DollarSign, value: formatCompact(model.recommendedSettlement), desc: "Resolve pre-suit at the policy-informed value — strongest risk-adjusted recovery.", recommended: true },
+    { key: "Trial", icon: Gavel, value: formatCompact(POLICY_LIMIT), desc: "Highest exposure, but added cost and timeline risk.", recommended: false },
   ];
-  const corridorMax = Math.max(...corridor.map((c) => c.amount));
 
   const audit = VIOLATION_CARDS.slice(0, 4);
 
+  // ── Corridor simulation state machine: idle → analyzing → done ──
+  const [corridorPhase, setCorridorPhase] = useState<"idle" | "analyzing" | "done">("idle");
+  const [corridorStep, setCorridorStep] = useState(0);
+  const [showGraph, setShowGraph] = useState(false); // done-state toggle: strategy ↔ context graph
+  const startCorridor = () => { setCorridorStep(0); setShowGraph(false); setCorridorPhase("analyzing"); };
+
+  // Advance one processing step every ~420ms; hand off to "done" at the end.
+  useEffect(() => {
+    if (corridorPhase !== "analyzing") return;
+    if (corridorStep >= CORRIDOR_STEPS.length) {
+      const t = setTimeout(() => setCorridorPhase("done"), 550);
+      return () => clearTimeout(t);
+    }
+    const t = setTimeout(() => setCorridorStep((s) => s + 1), 420);
+    return () => clearTimeout(t);
+  }, [corridorPhase, corridorStep]);
+
+  // Graph helpers — nodes appear progressively while analyzing; all lit when done.
+  const visibleNodes = corridorPhase === "done" ? GRAPH_NODES.length : corridorPhase === "analyzing" ? Math.min(GRAPH_NODES.length, corridorStep) : GRAPH_NODES.length;
+  const matchPct = corridorPhase === "done" ? CORRIDOR_RESULT.confidence : Math.round((Math.min(corridorStep, CORRIDOR_STEPS.length) / CORRIDOR_STEPS.length) * CORRIDOR_RESULT.confidence);
+
   return (
-    <div className="space-y-8">
-      {/* ── Top: full-width dashboard header + AI Active badge ── */}
+    <div className="space-y-10">
+      {/* ── 1 · Litigation Strategy Dashboard (case overview) ── */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
+          <div className="eyebrow text-deep mb-1">Case Overview</div>
           <h2 className="section-header">Litigation Strategy Dashboard</h2>
-          <p className="secondary-text mt-1 max-w-2xl">A strategic read on {model.caseName} — coverage posture, settlement corridor, comparable outcomes, and the directives to take it to trial.</p>
+          <p className="secondary-text mt-1 max-w-2xl">A strategic read on {model.caseName} — coverage posture, the AI's recommended strategy, the precedent behind it, and the plan to execute.</p>
         </div>
         <span className="pill pill-complete shrink-0">
           <span className="relative flex w-1.5 h-1.5">
@@ -2881,7 +3541,6 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
         </span>
       </div>
 
-      {/* 1 — Four equal-width summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {dashboard.map((c) => (
           <div key={c.label} className="lg-card p-5">
@@ -2902,181 +3561,299 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
         ))}
       </div>
 
-      {/* 2 — Strategic Settlement Corridor */}
-      <div className="lg-card overflow-hidden">
+      {/* ── 2 · Strategic Settlement Corridor — interactive AI workflow (idle → analyzing → done) ── */}
+      <div className="bg-ink rounded-xl overflow-hidden">
         <div className="grid grid-cols-1 lg:grid-cols-5 items-stretch">
-          <div className="lg:col-span-3 p-6">
-            <div className="eyebrow text-deep mb-2">Settlement Strategy</div>
-            <h2 className="section-header mb-2">Strategic Settlement Corridor</h2>
-            <p className="body-text leading-relaxed max-w-md">
-              Model the negotiation range from a conservative floor through the recommended target up to the confirmed policy ceiling. Run the simulation to pressure-test each anchor against comparable outcomes.
-            </p>
-            <button onClick={() => goTo?.("negotiation")} className="btn btn-primary gap-2 mt-6">
-              <SlidersHorizontal className="w-4 h-4" strokeWidth={1.75} /> Execute Corridor Simulation
-            </button>
-          </div>
 
-          {/* Visualization — scenario bar chart */}
-          <div className="lg:col-span-2 bg-tint border-t lg:border-t-0 lg:border-l border-[#D6F2F7] p-6">
-            <div className="eyebrow mb-4">Projected Corridor</div>
-            <div className="flex items-end justify-between gap-4 h-40">
-              {corridor.map((c) => (
-                <div key={c.label} className="flex-1 flex flex-col items-center justify-end h-full">
-                  <div className="text-xs font-semibold text-ink tabular-nums mb-2">{formatCompact(c.amount)}</div>
-                  <div
-                    className={`w-full rounded-t-lg ${c.highlight ? "bg-brand" : "bg-[#CDE9F1]"}`}
-                    style={{ height: `${(c.amount / corridorMax) * 100}%` }}
-                  />
+          {/* LEFT panel — idle copy / processing steps / insights found */}
+          <div className="lg:col-span-2 p-6 lg:border-r border-white/10">
+            {corridorPhase === "idle" && (
+              <>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <Sparkles className="w-4 h-4 text-brand" strokeWidth={1.75} />
+                  <span className="eyebrow text-brand">AI Recommended Strategy</span>
                 </div>
-              ))}
-            </div>
-            <div className="flex items-center justify-between gap-4 mt-2 pt-2 border-t border-[#D6F2F7]">
-              {corridor.map((c) => (
-                <div key={c.label} className="flex-1 text-center eyebrow truncate">{c.label}</div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Two-column intelligence section (65 / 35) ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-20 gap-6 items-start">
-
-        {/* LEFT (≈65%) — Strategy Brief → Negligence Audit → Trial Preparation */}
-        <div className="lg:col-span-13 space-y-8">
-
-          {/* 3 — Strategic Litigation Valuation Brief */}
-          <div className="lg-card p-6">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-              <div className="lg:col-span-2">
-                <div className="flex items-center gap-2 mb-3">
-                  <Sparkles className="w-[18px] h-[18px] text-deep" strokeWidth={1.75} />
-                  <h2 className="section-header">Strategic Litigation Valuation Brief</h2>
-                </div>
-                <p className="body-text leading-relaxed mb-5">
-                  LECO assesses {model.caseName} as a high-recovery matter. Objective liability, verified permanent injuries, and a favorable jurisdiction support a policy-limit posture with strong settlement leverage.
+                <h2 className="section-header text-white mb-2">Strategic Settlement Corridor</h2>
+                <p className="text-soft text-sm leading-relaxed">
+                  Run LECO's corridor simulation. The AI reasons across the verified evidence, negligence findings, coverage, and matched precedent to generate the recommended settlement strategy.
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {VALUATION_BRIEF.map((b) => (
-                    <div key={b.label} className="rounded-xl border border-line bg-offwhite p-4">
-                      <div className="flex items-center gap-1.5 mb-1.5">
-                        <b.icon className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} />
-                        <span className="eyebrow">{b.label}</span>
+                <button onClick={startCorridor} className="btn btn-primary gap-2 mt-6">
+                  <SlidersHorizontal className="w-4 h-4" strokeWidth={1.75} /> Execute Corridor Simulation
+                </button>
+              </>
+            )}
+
+            {corridorPhase === "analyzing" && (
+              <>
+                <div className="flex items-center gap-1.5 mb-4">
+                  <Loader2 className="w-4 h-4 text-brand animate-spin" strokeWidth={1.75} />
+                  <span className="eyebrow text-brand">AI Analyzing Case</span>
+                </div>
+                <div className="space-y-2.5">
+                  {CORRIDOR_STEPS.map((s, i) => {
+                    const done = i < corridorStep;
+                    const active = i === corridorStep;
+                    return (
+                      <div key={s} className={`flex items-center gap-2.5 text-sm transition-opacity duration-300 ${done || active ? "opacity-100" : "opacity-30"}`}>
+                        {done ? (
+                          <CheckCircle className="w-4 h-4 text-brand shrink-0" strokeWidth={1.75} />
+                        ) : active ? (
+                          <Loader2 className="w-4 h-4 text-brand shrink-0 animate-spin" strokeWidth={1.75} />
+                        ) : (
+                          <Circle className="w-4 h-4 text-white/30 shrink-0" strokeWidth={1.75} />
+                        )}
+                        <span className={done ? "text-soft" : "text-white"}>{s}</span>
                       </div>
-                      <p className="secondary-text leading-relaxed">{b.text}</p>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            {corridorPhase === "done" && (
+              <>
+                <div className="flex items-center gap-1.5 mb-2">
+                  <CheckCircle className="w-4 h-4 text-brand" strokeWidth={1.75} />
+                  <span className="eyebrow text-brand">Analysis Complete</span>
+                </div>
+                <h2 className="section-header text-white mb-3">Insights Found</h2>
+                <ul className="space-y-2.5">
+                  <li className="flex items-start gap-2.5 text-sm text-soft"><CheckCircle className="w-4 h-4 text-brand mt-0.5 shrink-0" strokeWidth={1.75} /><span><span className="text-white font-semibold tabular-nums">{CORRIDOR_RESULT.matchedCases}</span> historical cases matched.</span></li>
+                  <li className="flex items-start gap-2.5 text-sm text-soft"><CheckCircle className="w-4 h-4 text-brand mt-0.5 shrink-0" strokeWidth={1.75} /><span><span className="text-white font-semibold tabular-nums">{CORRIDOR_RESULT.confidence}%</span> similarity with comparable verdicts.</span></li>
+                  <li className="flex items-start gap-2.5 text-sm text-soft"><CheckCircle className="w-4 h-4 text-brand mt-0.5 shrink-0" strokeWidth={1.75} /><span>Recommended recovery corridor generated.</span></li>
+                </ul>
+                <div className="flex items-center gap-2 mt-6 flex-wrap">
+                  <button onClick={() => goTo?.("negotiation")} className="btn btn-primary gap-2">
+                    Open Strategy Dashboard <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
+                  </button>
+                  <button onClick={() => setShowGraph((v) => !v)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-white/20 text-white text-sm font-medium hover:bg-white/10 transition-colors">
+                    {showGraph ? "View Corridor" : "View Context Graph"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* RIGHT panel — idle graph / animated reasoning graph / corridor result */}
+          <div className="lg:col-span-3 relative border-t lg:border-t-0 border-white/10 bg-white/[0.03] p-6 min-h-[320px]">
+
+            {/* Match badge — climbs while analyzing */}
+            {corridorPhase !== "idle" && !(corridorPhase === "done" && !showGraph) && (
+              <div className="absolute top-4 right-4 z-10 inline-flex items-center gap-1.5 rounded-full bg-white/10 border border-white/15 px-3 py-1 text-xs font-semibold text-white tabular-nums">
+                <Sparkles className="w-3 h-3 text-brand" strokeWidth={1.75} /> Match {matchPct}%
+              </div>
+            )}
+
+            {(corridorPhase === "idle" || corridorPhase === "analyzing" || (corridorPhase === "done" && showGraph)) && (
+              <div className="absolute inset-0">
+                {/* Edges */}
+                <svg className="absolute inset-0 w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                  {GRAPH_EDGES.map(([a, b]) => {
+                    const na = GRAPH_NODES[a], nb = GRAPH_NODES[b];
+                    const on = corridorPhase !== "analyzing" || (a < visibleNodes && b < visibleNodes);
+                    return (
+                      <line key={`${a}-${b}`} x1={na.x} y1={na.y} x2={nb.x} y2={nb.y}
+                        stroke="#3FB5D7" strokeWidth={corridorPhase === "idle" ? 0.15 : 0.25}
+                        className={`transition-opacity duration-500 ${corridorPhase === "analyzing" ? "animate-pulse" : ""}`}
+                        opacity={corridorPhase === "idle" ? 0.15 : on ? 0.45 : 0} vectorEffect="non-scaling-stroke" strokeDasharray={corridorPhase === "analyzing" ? "3 3" : undefined}
+                      />
+                    );
+                  })}
+                </svg>
+
+                {/* Floating data particles while analyzing */}
+                {corridorPhase === "analyzing" && [
+                  { x: 30, y: 24, d: "0s" }, { x: 68, y: 40, d: "0.4s" }, { x: 40, y: 66, d: "0.8s" },
+                  { x: 74, y: 74, d: "1.2s" }, { x: 22, y: 52, d: "1.6s" }, { x: 58, y: 20, d: "0.6s" },
+                ].map((p, i) => (
+                  <span key={i} className="absolute w-1.5 h-1.5 rounded-full bg-brand animate-ping" style={{ left: `${p.x}%`, top: `${p.y}%`, animationDelay: p.d }} />
+                ))}
+
+                {/* Nodes */}
+                {GRAPH_NODES.map((n, i) => {
+                  const lit = corridorPhase === "idle" ? false : i < visibleNodes;
+                  return (
+                    <div key={n.label} className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-1 transition-opacity duration-500" style={{ left: `${n.x}%`, top: `${n.y}%`, opacity: corridorPhase === "idle" ? 0.35 : lit ? 1 : 0.15 }}>
+                      <span className={`relative flex w-3 h-3 ${lit && corridorPhase === "analyzing" ? "" : ""}`}>
+                        {lit && corridorPhase === "analyzing" && <span className="absolute inline-flex w-full h-full rounded-full bg-brand opacity-60 animate-ping" />}
+                        <span className={`relative inline-flex w-3 h-3 rounded-full ${lit ? "bg-brand" : "bg-white/30"}`} />
+                      </span>
+                      <span className={`text-[10px] font-medium whitespace-nowrap ${lit ? "text-white" : "text-white/40"}`}>{n.label}</span>
+                    </div>
+                  );
+                })}
+
+                {corridorPhase === "idle" && (
+                  <div className="absolute inset-x-0 bottom-4 text-center text-xs text-white/40">Legal context graph · idle — run the simulation to begin</div>
+                )}
+              </div>
+            )}
+
+            {/* Done — Strategy Options (recommended in the middle) */}
+            {corridorPhase === "done" && !showGraph && (
+              <div className="h-full flex flex-col justify-center">
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <div className="eyebrow text-soft">Strategy Options</div>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 border border-white/15 px-3 py-1 text-xs font-semibold text-white tabular-nums">
+                    <ShieldCheck className="w-3 h-3 text-brand" strokeWidth={1.75} /> {CORRIDOR_RESULT.confidence}% Confidence
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {strategyOptions.map((o) => (
+                    <div key={o.key} className={`rounded-xl p-4 flex flex-col ${o.recommended ? "bg-brand/10 border-2 border-brand" : "bg-white/5 border border-white/10"}`}>
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${o.recommended ? "bg-brand" : "bg-white/10"}`}>
+                          <o.icon className="w-4 h-4 text-white" strokeWidth={1.75} />
+                        </div>
+                        {o.recommended && <span className="inline-flex items-center gap-1 rounded-full bg-brand/20 border border-brand/40 px-2 py-0.5 text-[10px] font-semibold text-brand uppercase tracking-wide"><CheckCircle className="w-3 h-3" strokeWidth={1.75} /> Recommended</span>}
+                      </div>
+                      <div className="text-white font-semibold">{o.key}</div>
+                      <div className="text-lg font-bold text-white tabular-nums mt-0.5">{o.value}</div>
+                      <p className="text-soft text-xs leading-relaxed mt-1.5 flex-1">{o.desc}</p>
                     </div>
                   ))}
                 </div>
               </div>
-
-              <div className="lg:col-span-1 flex flex-col items-center justify-center rounded-xl bg-tint border border-[#D6F2F7] p-6">
-                <ConfidenceRing value={model.confidence} />
-                <div className="mt-4 text-center">
-                  <div className="eyebrow mb-1">Recommended Value</div>
-                  <div className="text-2xl font-bold text-ink tabular-nums">{formatCompact(model.recommendedSettlement)}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 4 — Case Negligence & Clinical Lapse Audit */}
-          <div>
-            <div className="mb-4">
-              <h2 className="section-header">Case Negligence & Clinical Lapse Audit</h2>
-              <p className="secondary-text mt-1 max-w-2xl">The strongest negligence findings LECO surfaced, with the AI reasoning and evidence confidence behind each.</p>
-            </div>
-            <div className="space-y-4">
-              {audit.map((v) => (
-                <div key={v.id} className="lg-card p-5">
-                  <div className="flex items-start justify-between gap-3 mb-2">
-                    <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                      <span className={VIOLATION_SEVERITY_PILL[v.severity]}>{v.severity}</span>
-                      <h3 className="card-title">{v.title}</h3>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <div className="text-sm font-bold text-deep tabular-nums">{v.confidence}%</div>
-                      <div className="eyebrow">Confidence</div>
-                    </div>
-                  </div>
-                  <div className="rounded-xl bg-tint border border-[#D6F2F7] p-3.5">
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} />
-                      <span className="eyebrow text-deep">AI Reasoning</span>
-                    </div>
-                    <p className="secondary-text leading-relaxed">{v.aiSummary}</p>
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-3 text-xs text-[#5B6B78]">
-                    <ShieldCheck className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} />
-                    Evidence strength: <span className="font-semibold text-ink">{v.evidenceStrength}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* 5 — Litigation & Trial Preparation Directives */}
-          <div>
-            <div className="mb-4">
-              <h2 className="section-header">Litigation & Trial Preparation Directives</h2>
-              <p className="secondary-text mt-1 max-w-2xl">An attorney action checklist generated from the case intelligence above.</p>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {TRIAL_DIRECTIVES.map((d) => (
-                <div key={d.title} className="lg-card p-5">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-9 h-9 rounded-lg bg-tint flex items-center justify-center shrink-0">
-                      <d.icon className="w-4 h-4 text-deep" strokeWidth={1.75} />
-                    </div>
-                    <h3 className="card-title">{d.title}</h3>
-                  </div>
-                  <ul className="space-y-2.5">
-                    {d.items.map((item) => (
-                      <li key={item} className="flex items-start gap-2.5">
-                        <CheckCircle className="w-4 h-4 text-deep mt-0.5 shrink-0" strokeWidth={1.75} />
-                        <span className="body-text leading-snug">{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* RIGHT (≈35%) — Local Comparable Jury Verdicts (sticky) */}
-        <div className="lg:col-span-7 lg:sticky lg:top-[176px] self-start">
-          <div className="mb-4">
-            <h2 className="section-header">Local Comparable Jury Verdicts</h2>
-            <p className="secondary-text mt-1">Verdicts and settlements from the same jurisdiction and fact pattern, ranked by match.</p>
-          </div>
-          <div className="space-y-4">
-            {COMPARABLE_VERDICTS.map((v) => (
-              <div key={v.caseName} className="lg-card lg-card-i p-5 flex flex-col">
-                <div className="flex items-start justify-between gap-3 mb-2">
-                  <div className="w-9 h-9 rounded-lg bg-tint flex items-center justify-center shrink-0">
-                    <Gavel className="w-4 h-4 text-deep" strokeWidth={1.75} />
-                  </div>
-                  <span className="pill pill-complete">{v.matchScore}% Match Index</span>
-                </div>
-                <h3 className="card-title leading-snug mb-1">{v.caseName}</h3>
-                <div className="text-xl font-bold text-ink tabular-nums mb-2">{formatUSD(v.amount)}</div>
-                <p className="secondary-text leading-relaxed flex-1">{v.summary}</p>
-                <div className="flex flex-wrap gap-1.5 mt-4 pt-4 border-t border-line">
-                  {v.tags.map((t) => (
-                    <span key={t} className="pill pill-neutral">{t}</span>
-                  ))}
-                </div>
-              </div>
-            ))}
+            )}
           </div>
         </div>
       </div>
 
-      {/* 7 — Final CTA */}
+      {/* ── 3 · Precedent Analysis — historical cases used ── */}
+      <div>
+        <div className="mb-5">
+          <div className="eyebrow text-deep mb-1">Precedent Engine</div>
+          <h2 className="section-header">Precedent Analysis</h2>
+          <p className="secondary-text mt-1 max-w-2xl">These historical cases were matched by the AI to generate the recommended settlement strategy.</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {COMPARABLE_VERDICTS.map((v) => (
+            <div key={v.caseName} className="lg-card lg-card-i p-5 flex flex-col">
+              {/* Category labels above the card */}
+              <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                <span className="pill pill-complete">{v.matchScore}% Match</span>
+                {v.labels.map((l) => (
+                  <span key={l} className="pill pill-neutral">{l}</span>
+                ))}
+              </div>
+              <h3 className="card-title leading-snug mb-1">{v.caseName}</h3>
+              <div className="text-xl font-bold text-ink tabular-nums mb-2">{formatUSD(v.amount)}</div>
+              <p className="secondary-text leading-relaxed flex-1">{v.summary}</p>
+              <div className="flex flex-wrap gap-1.5 mt-4 pt-4 border-t border-line">
+                {v.tags.map((t) => (
+                  <span key={t} className="pill pill-neutral">{t}</span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── 4 · Strategic Litigation Valuation Brief — why the AI recommended this ── */}
+      <div className="lg-card p-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+          <div className="lg:col-span-2">
+            <div className="eyebrow text-deep mb-1">Why This Strategy</div>
+            <div className="flex items-center gap-2 mb-3">
+              <Sparkles className="w-[18px] h-[18px] text-deep" strokeWidth={1.75} />
+              <h2 className="section-header">Strategic Litigation Valuation Brief</h2>
+            </div>
+            <p className="body-text leading-relaxed mb-5">
+              LECO selected the recommended strategy by weighing the verified <strong className="font-semibold text-ink">damages</strong>, the strength of <strong className="font-semibold text-ink">liability</strong>, the <strong className="font-semibold text-ink">jurisdiction</strong>, the closest <strong className="font-semibold text-ink">precedent matches</strong> above, and the confirmed <strong className="font-semibold text-ink">policy limits</strong>.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {VALUATION_BRIEF.map((b) => (
+                <div key={b.label} className="rounded-xl border border-line bg-offwhite p-4">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <b.icon className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} />
+                    <span className="eyebrow">{b.label}</span>
+                  </div>
+                  <p className="secondary-text leading-relaxed">{b.text}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="lg:col-span-1 flex flex-col items-center justify-center rounded-xl bg-tint border border-[#D6F2F7] p-6">
+            <ConfidenceRing value={model.confidence} />
+            <div className="mt-4 text-center">
+              <div className="eyebrow mb-1">Recommended Value</div>
+              <div className="text-2xl font-bold text-ink tabular-nums">{formatCompact(model.recommendedSettlement)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── 5 · Case Negligence & Clinical Lapse Audit — facts supporting the strategy ── */}
+      <div>
+        <div className="mb-5">
+          <div className="eyebrow text-deep mb-1">Supporting Findings</div>
+          <h2 className="section-header">Case Negligence & Clinical Lapse Audit</h2>
+          <p className="secondary-text mt-1 max-w-2xl">These case findings increase settlement leverage and strengthen the recommended strategy.</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {audit.map((v) => (
+            <div key={v.id} className="lg-card p-5">
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                  <span className={VIOLATION_SEVERITY_PILL[v.severity]}>{v.severity}</span>
+                  <h3 className="card-title">{v.title}</h3>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-sm font-bold text-deep tabular-nums">{v.confidence}%</div>
+                  <div className="eyebrow">Confidence</div>
+                </div>
+              </div>
+              <div className="rounded-xl bg-tint border border-[#D6F2F7] p-3.5">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} />
+                  <span className="eyebrow text-deep">AI Reasoning</span>
+                </div>
+                <p className="secondary-text leading-relaxed">{v.aiSummary}</p>
+              </div>
+              <div className="flex items-center gap-1.5 mt-3 text-xs text-[#5B6B78]">
+                <ShieldCheck className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} />
+                Evidence strength: <span className="font-semibold text-ink">{v.evidenceStrength}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── 6 · Litigation & Trial Preparation Directives — the action plan ── */}
+      <div>
+        <div className="mb-5">
+          <div className="eyebrow text-deep mb-1">Action Plan</div>
+          <h2 className="section-header">Litigation &amp; Trial Preparation Directives</h2>
+          <p className="secondary-text mt-1 max-w-2xl">These actions are generated from the recommended strategy and the weaknesses identified in the analysis above.</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {TRIAL_DIRECTIVES.map((d) => (
+            <div key={d.title} className="lg-card p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-9 h-9 rounded-lg bg-tint flex items-center justify-center shrink-0">
+                  <d.icon className="w-4 h-4 text-deep" strokeWidth={1.75} />
+                </div>
+                <h3 className="card-title">{d.title}</h3>
+              </div>
+              <ul className="space-y-2.5">
+                {d.items.map((item) => (
+                  <li key={item} className="flex items-start gap-2.5">
+                    <CheckCircle className="w-4 h-4 text-deep mt-0.5 shrink-0" strokeWidth={1.75} />
+                    <span className="body-text leading-snug">{item}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── 7 · Generate Demand CTA ── */}
       <div className="bg-ink rounded-xl px-6 py-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="min-w-0">
           <h2 className="section-header text-white">Ready to assemble the demand</h2>
-          <p className="text-soft text-sm mt-1 max-w-xl">Compile the intelligence above into an attorney-ready demand package to advance the case.</p>
+          <p className="text-soft text-sm mt-1 max-w-xl">Compile the recommended strategy, precedent, and findings into an attorney-ready demand package.</p>
         </div>
         <button onClick={() => goTo?.("negotiation")} className="btn btn-primary gap-2 shrink-0">
           <FileSignature className="w-4 h-4" strokeWidth={1.75} /> Generate Demand
