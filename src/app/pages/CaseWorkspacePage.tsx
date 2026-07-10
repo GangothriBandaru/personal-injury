@@ -93,7 +93,7 @@ export function CaseWorkspacePage({ caseData, analysisFindings = [], documents =
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button onClick={() => setActiveTab("demand")} className="btn btn-primary gap-2">
-                <FileSignature className="w-4 h-4" strokeWidth={1.75} /> Generate Demand
+                <FileSignature className="w-4 h-4" strokeWidth={1.75} /> Demand Space
               </button>
               <button onClick={() => setActiveTab("evidence")} className="btn btn-secondary gap-2">
                 <FolderOpen className="w-4 h-4" strokeWidth={1.75} /> Documents

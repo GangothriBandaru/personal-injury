@@ -5,7 +5,7 @@ import {
   ArrowRight, ChevronDown, ChevronLeft, ChevronRight, Search, Eye, Lightbulb, Download,
   Gavel, MessageSquare, SlidersHorizontal,
   HeartPulse, ClipboardList, Image as ImageIcon, Video, FileSignature, Quote,
-  Pencil, RotateCcw, History, TrendingUp, TrendingDown, Info, Shield, Circle, Loader2,
+  Pencil, RotateCcw, History, TrendingUp, TrendingDown, Info, Shield, Circle, Loader2, Bot, Send,
 } from "lucide-react";
 import type { AnalysisFinding, CaseDocument } from "../types/case";
 import { classifyDocuments } from "../types/case";
@@ -1646,6 +1646,51 @@ const DAMAGE_EVIDENCE = [
   },
 ];
 
+// Inline "Chat with AI" panel — swaps into a precedent-case drawer's body so the
+// same drawer (and header) can move between the case detail view and a chat view.
+function PrecedentChatPanel({ caseName, onBack }: { caseName: string; onBack: () => void }) {
+  const [messages, setMessages] = useState<{ from: "ai" | "user"; text: string }[]>([
+    { from: "ai", text: `Ask me anything about ${caseName} — similarity drivers, settlement rationale, or how to use it in your strategy.` },
+  ]);
+  const [input, setInput] = useState("");
+  const send = () => {
+    const text = input.trim();
+    if (!text) return;
+    setMessages((prev) => [
+      ...prev,
+      { from: "user", text },
+      { from: "ai", text: `Reviewing ${caseName} — I'll factor this into the precedent analysis for your case strategy.` },
+    ]);
+    setInput("");
+  };
+  return (
+    <>
+      <div className="flex-1 overflow-y-auto p-5 space-y-4">
+        <button onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-medium text-deep hover:text-ink transition-colors">
+          <ChevronLeft className="w-4 h-4" strokeWidth={1.75} /> Back to Case Details
+        </button>
+        {messages.map((m, i) => (
+          <div key={i} className={`flex ${m.from === "user" ? "justify-end" : "justify-start"}`}>
+            <div className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === "user" ? "bg-brand text-white" : "bg-tint text-ink"}`}>
+              {m.text}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="border-t border-line p-4 flex items-center gap-2">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") send(); }}
+          placeholder="Ask about this case..."
+          className="flex-1 px-3.5 py-2.5 rounded-lg border border-line text-sm text-ink focus:outline-none focus:border-brand transition-colors"
+        />
+        <button onClick={send} className="btn btn-primary px-3.5 py-2.5"><Send className="w-4 h-4" strokeWidth={1.75} /></button>
+      </div>
+    </>
+  );
+}
+
 export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: TabProps) {
   const subtotal = ECONOMIC.reduce((s, e) => s + e.value, 0);
 
@@ -1673,15 +1718,13 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
   const [draftMult, setDraftMult] = useState(0);
   const [draftNote, setDraftNote] = useState("");
   const [historyOpen, setHistoryOpen] = useState(false);
-  // Drawer collapsibles: AI summary / AI suggestions.
-  const [drawerReasoningOpen, setDrawerReasoningOpen] = useState(true);
-  const [drawerSuggestionOpen, setDrawerSuggestionOpen] = useState(false);
   // When an override was last made, per factor (e.g. "Today • 3:42 PM").
   const [modifiedAt, setModifiedAt] = useState<Record<string, string>>({});
   const nowStamp = () => `Today • ${new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
   // "View Details" drawer for a damage factor.
   const [detailFactor, setDetailFactor] = useState<string | null>(null);
   const [detailDocsOpen, setDetailDocsOpen] = useState(false);
+  const [detailChatOpen, setDetailChatOpen] = useState(false);
   // Precedent case detail drawer from the Intelligence cards.
   const [selectedPrecedent, setSelectedPrecedent] = useState<(typeof COMPARABLE_VERDICTS)[number] | null>(null);
   const [precedentReasoningOpen, setPrecedentReasoningOpen] = useState(true);
@@ -1709,12 +1752,12 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
   // Open the View Details drawer (read mode); AI summary open, suggestions closed.
   const openDetail = (cat: string) => {
     setDetailFactor(cat); setEditMode(false); setDraftMult(currentMult(cat)); setDraftNote("");
-    setDrawerReasoningOpen(true); setDrawerSuggestionOpen(false); setDetailDocsOpen(false);
+    setDetailDocsOpen(false); setDetailChatOpen(false);
   };
   // Open the drawer straight into inline edit mode (from a card's Edit button).
   const openEditDrawer = (cat: string) => {
     setDetailFactor(cat); setEditMode(true); setDraftMult(currentMult(cat)); setDraftNote("");
-    setDrawerReasoningOpen(false); setDrawerSuggestionOpen(false); setDetailDocsOpen(false);
+    setDetailDocsOpen(false); setDetailChatOpen(false);
   };
   const startEdit = () => { if (detailFactor) { setDraftMult(currentMult(detailFactor)); setDraftNote(""); setEditMode(true); } };
   const cancelEdit = () => setEditMode(false);
@@ -1757,6 +1800,14 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
   const toggleDocRow = (name: string) =>
     setExpandedDocRows((prev) => { const n = new Set(prev); if (n.has(name)) n.delete(name); else n.add(name); return n; });
   const openDrawer = (item: (typeof ECONOMIC)[number]) => { setDrawerItem(item); setDrawerDocsOpen(false); setExpandedDocRows(new Set()); };
+
+  // Lock background scroll while any right-side drawer is open, so the dimmed
+  // backdrop always covers the full viewport regardless of scroll position.
+  useEffect(() => {
+    const anyDrawerOpen = !!detailFactor || !!selectedPrecedent || !!drawerItem;
+    document.body.style.overflow = anyDrawerOpen ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [detailFactor, selectedPrecedent, drawerItem]);
   // Preview/Insights workspace for the drawer's documents (separate from the
   // Verified Damage Evidence workspace below).
   const [ecoWsView, setEcoWsView] = useState<"preview" | "insights" | null>(null);
@@ -2594,80 +2645,157 @@ export function EconomicDamagesTab({ model, documents, goTo, goToValuation }: Ta
             {/* Header */}
             <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-line">
               <div className="min-w-0">
-                <div className="eyebrow mb-1">PRECEDENT CASE</div>
+                <div className="eyebrow mb-1">Damage Factor</div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h2 className="card-title">Reyes v. Interstate Freight Lines</h2>
-                  <span className="pill pill-complete">94% Match</span>
+                  <h2 className="card-title">{f.category}</h2>
+                  <span className={SEVERITY_PILL[f.severity]}>{f.severity}</span>
                 </div>
               </div>
               <button onClick={() => setDetailFactor(null)} className="p-1.5 hover:bg-tint rounded-lg transition-colors shrink-0"><X className="w-5 h-5 text-[#5B6B78]" strokeWidth={1.75} /></button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
-              <div className="text-xs text-[#5B6B78] flex items-center gap-2.5 flex-wrap">
-                <span>94% Match <span className="font-semibold text-ink">•</span> Commercial Vehicle <span className="font-semibold text-ink">•</span> Cervical Injury</span>
-              </div>
+            {detailChatOpen ? (
+              <PrecedentChatPanel caseName={f.category} onBack={() => setDetailChatOpen(false)} />
+            ) : (
+              <>
+                <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                  {/* Current Multiplier — read view or inline editor */}
+                  {!editMode ? (
+                    <div className="rounded-xl border border-line bg-offwhite p-3.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="eyebrow mb-0.5">Current Multiplier</div>
+                          <div className="text-xl font-bold text-ink tabular-nums">{fmtMult(cur)}</div>
+                          <div className="text-xs text-[#8A98A3] mt-0.5">Range {fmtMult(lo)}–{fmtMult(hi)} · AI recommended {fmtMult(f.aiMultiplier)}</div>
+                        </div>
+                        <button onClick={startEdit} className="btn btn-secondary text-xs px-3 py-2 gap-1.5 shrink-0">
+                          <Pencil className="w-3.5 h-3.5" strokeWidth={1.75} /> Edit
+                        </button>
+                      </div>
+                      {overridden && (
+                        <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-line flex-wrap">
+                          <div className="text-xs text-ink">
+                            <span className="font-semibold tabular-nums">{diff > 0 ? "+" : ""}{formatUSD(diff)}</span> vs. AI recommendation
+                            {stamp && <span className="text-[#8A98A3]"> · {stamp}</span>}
+                          </div>
+                          <button onClick={() => restoreFactor(detailFactor)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-deep hover:text-ink transition-colors">
+                            <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} /> Restore AI Recommendation
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-brand bg-tint p-3.5 space-y-3.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="eyebrow">Edit Multiplier</div>
+                        <button onClick={() => restoreFactor(detailFactor)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-deep hover:text-ink transition-colors">
+                          <RotateCcw className="w-3.5 h-3.5" strokeWidth={1.75} /> Restore AI
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {presets.map((p) => (
+                          <button
+                            key={p}
+                            onClick={() => setDraftMult(p)}
+                            className={`flex-1 rounded-lg border px-2 py-2 text-sm font-semibold tabular-nums transition-colors ${draftMult === p ? "border-brand bg-brand text-white" : "border-line bg-white text-ink hover:bg-wash"}`}
+                          >
+                            {fmtMult(p)}
+                          </button>
+                        ))}
+                      </div>
+                      <div>
+                        <div className="eyebrow mb-1.5">Custom Value</div>
+                        <input
+                          type="number" step="0.05" value={draftMult}
+                          onChange={(e) => setDraftMult(Number(e.target.value))}
+                          className="w-full px-3 py-2 rounded-lg border border-line text-sm text-ink focus:outline-none focus:border-brand transition-colors"
+                        />
+                      </div>
+                      <div className="rounded-lg bg-white border border-line p-3">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="secondary-text">Settlement Impact</span>
+                          <span className="font-semibold tabular-nums text-ink">{draftDiff === 0 ? "No change" : `${draftDiff > 0 ? "+" : ""}${formatUSD(draftDiff)}`}</span>
+                        </div>
+                        <div className="text-xs text-[#8A98A3] mt-1">New Total: {formatUSD(draftSettlement)}</div>
+                      </div>
+                      <div>
+                        <div className="eyebrow mb-1.5">Note (optional)</div>
+                        <textarea
+                          value={draftNote} onChange={(e) => setDraftNote(e.target.value)} rows={2}
+                          placeholder="Reason for adjustment..."
+                          className="w-full px-3 py-2 rounded-lg border border-line text-sm text-ink focus:outline-none focus:border-brand transition-colors resize-none"
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={cancelEdit} className="btn btn-secondary flex-1 justify-center">Cancel</button>
+                        <button onClick={saveFactorEdit} className="btn btn-primary flex-1 justify-center">Save Changes</button>
+                      </div>
+                    </div>
+                  )}
 
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-offwhite p-3.5">
-                <div>
-                  <div className="eyebrow mb-0.5">SETTLEMENT OUTCOME</div>
-                  <div className="text-xl font-bold text-ink tabular-nums">$1,750,000</div>
-                  <div className="text-xs text-[#8A98A3] mt-0.5">Resolved through Pre-Trial Settlement</div>
-                </div>
-              </div>
+                  <div className={`space-y-5 transition-opacity ${dim}`}>
+                    <div className="rounded-xl border border-line overflow-hidden">
+                      <div className="flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-semibold text-ink border-b border-line bg-tint">
+                        <Sparkles className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> AI Summary
+                      </div>
+                      <div className="px-3.5 py-3 bg-tint">
+                        <p className="secondary-text leading-relaxed">{f.aiReasoning}</p>
+                      </div>
+                    </div>
 
-              <div>
-                <div className="eyebrow mb-1.5">SIMILARITY DRIVERS</div>
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="pill pill-neutral">Commercial Vehicle</span>
-                  <span className="pill pill-neutral">Commercial Carrier</span>
-                  <span className="pill pill-neutral">Cervical Injury</span>
-                  <span className="pill pill-neutral">Long-Term Treatment</span>
-                  <span className="pill pill-neutral">Cook County</span>
-                  <span className="pill pill-neutral">Strong Liability</span>
-                </div>
-              </div>
+                    <div className="rounded-xl border border-line overflow-hidden">
+                      <div className="flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-semibold text-ink border-b border-line bg-offwhite">
+                        <Sparkles className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> AI Suggestions
+                      </div>
+                      <div className="px-3.5 py-3 bg-offwhite">
+                        <div className="rounded-lg bg-white border border-line p-3">
+                          <div className="eyebrow mb-1">Recommended Additional Evidence</div>
+                          <div className="text-sm font-semibold text-ink">{f.suggestion.evidence}</div>
+                          <p className="secondary-text mt-1.5 leading-relaxed">{f.suggestion.why}</p>
+                          <div className="flex items-center gap-5 mt-3 pt-3 border-t border-line">
+                            <div>
+                              <div className="eyebrow">Multiplier Gain</div>
+                              <div className="text-sm font-bold text-deep tabular-nums mt-0.5">+{fmtMult(f.suggestion.multiplierGain)}</div>
+                            </div>
+                            <div>
+                              <div className="eyebrow">Settlement Impact</div>
+                              <div className="text-sm font-bold text-deep tabular-nums mt-0.5">+{formatUSD(gainSettlement)}</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
 
-              <div className="rounded-xl border border-line overflow-hidden">
-                <button onClick={() => setDrawerReasoningOpen((v) => !v)} className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-wash transition-colors">
-                  <span className="flex items-center gap-1.5 text-xs font-semibold text-ink"><Sparkles className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> AI Summary</span>
-                  <ChevronDown className={`w-4 h-4 text-deep transition-transform ${drawerReasoningOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
-                </button>
-                {drawerReasoningOpen && (
-                  <div className="px-3.5 pb-3.5 pt-2 border-t border-line bg-tint">
-                    <div className="eyebrow mb-1.5">Why 94% Match</div>
-                    <p className="secondary-text leading-relaxed">
-                      LECO identified this precedent because it closely aligns with Estate of Miller across multiple legal and factual dimensions. Both matters involve catastrophic injuries, clearly documented negligence, strong liability evidence, and long-term medical impact. The comparable jurisdiction and settlement outcome make this case a reliable benchmark for estimating recovery potential and supporting the recommended settlement corridor.
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <div className="rounded-xl border border-line overflow-hidden">
-                <button onClick={() => setDrawerSuggestionOpen((v) => !v)} className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-wash transition-colors">
-                  <span className="flex items-center gap-1.5 text-xs font-semibold text-ink"><Sparkles className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> AI Suggestions</span>
-                  <ChevronDown className={`w-4 h-4 text-deep transition-transform ${drawerSuggestionOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
-                </button>
-                {drawerSuggestionOpen && (
-                  <div className="px-3.5 pb-3.5 pt-2 border-t border-line bg-offwhite space-y-2.5">
-                    <div className="rounded-lg bg-white border border-line p-2.5">
-                      <div className="eyebrow mb-1">Recommended Use</div>
-                      <ul className="space-y-1.5 text-sm text-ink">
-                        <li>• Support the initial settlement demand with a comparable recovery outcome.</li>
-                        <li>• Reference this case when explaining long-term injury valuation.</li>
-                        <li>• Strengthen liability discussions using similar negligence findings.</li>
-                        <li>• Cite this precedent during negotiation to reinforce the recommended settlement corridor.</li>
-                      </ul>
+                    <div>
+                      <div className="eyebrow mb-2">Supporting Documents ({f.docCount})</div>
+                      <div className="space-y-1.5">
+                        {(detailDocsOpen ? docNames : docNames.slice(0, 5)).map((name) => (
+                          <button
+                            key={name}
+                            onClick={() => openFactorDoc(detailFactor, name)}
+                            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-line bg-white hover:bg-wash transition-colors text-left"
+                          >
+                            <FileText className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} />
+                            <span className="text-sm text-ink truncate">{name}</span>
+                          </button>
+                        ))}
+                        {docNames.length > 5 && (
+                          <button onClick={() => setDetailDocsOpen((v) => !v)} className="text-xs font-semibold text-deep hover:text-ink transition-colors">
+                            {detailDocsOpen ? "Show less" : `View ${docNames.length - 5} more`}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
-                )}
-              </div>
-            </div>
+                </div>
 
-            <div className="border-t border-line p-4 flex items-center gap-2">
-              <button className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg bg-white border border-line text-ink text-sm font-medium hover:bg-wash transition-colors">💬 Chat with AI</button>
-              <button className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg bg-brand hover:bg-deep text-white text-sm font-semibold transition-colors">✨ View Insights</button>
-            </div>
+                <div className="border-t border-line p-4">
+                  <button onClick={() => setDetailChatOpen(true)} className="btn btn-primary w-full justify-center gap-2">
+                    <Bot className="w-4 h-4" strokeWidth={1.75} /> Chat with AI
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </>
       );
@@ -2941,7 +3069,7 @@ export function NonEconomicDamagesTab({ goTo, documents }: TabProps) {
 // ── Tab 5 — Liability Analysis ────────────────────────────────────────────────
 
 // Severity tag → pill class for violations (Critical = red, Major = amber, Moderate = teal).
-const VIOLATION_SEVERITY_PILL: Record<string, string> = {
+export const VIOLATION_SEVERITY_PILL: Record<string, string> = {
   Critical: "pill pill-risk",
   High: "pill pill-progress",
   Medium: "pill pill-neutral",
@@ -2955,7 +3083,7 @@ const LEGAL_FRAMEWORK = {
   statute: "Illinois Vehicle Code (625 ILCS 5)",
 };
 
-type ViolationCard = {
+export type ViolationCard = {
   id: string;
   title: string;
   severity: "Critical" | "High" | "Medium" | "Low";
@@ -2970,7 +3098,7 @@ type ViolationCard = {
   evidence: string[];
 };
 
-const VIOLATION_CARDS: ViolationCard[] = [
+export const VIOLATION_CARDS: ViolationCard[] = [
   {
     id: "failure-to-yield",
     title: "Failure to Yield Right-of-Way",
@@ -3505,9 +3633,9 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
 
   // The three strategy paths the AI weighed — Settlement (recommended) sits in the middle.
   const strategyOptions = [
-    { key: "Negotiation", icon: MessageSquare, value: `${formatCompact(model.estimatedLow)} – ${formatCompact(model.recommendedSettlement)}`, desc: "Trade demands to close above the corridor midpoint.", recommended: false },
-    { key: "Settlement", icon: DollarSign, value: formatCompact(model.recommendedSettlement), desc: "Resolve pre-suit at the policy-informed value — strongest risk-adjusted recovery.", recommended: true },
-    { key: "Trial", icon: Gavel, value: formatCompact(POLICY_LIMIT), desc: "Highest exposure, but added cost and timeline risk.", recommended: false },
+    { key: "Negotiation", label: "Rapid Exit Strategy", icon: MessageSquare, value: `${formatCompact(model.estimatedLow)} – ${formatCompact(model.recommendedSettlement)}`, desc: "Trade demands to close above the corridor midpoint.", recommended: false },
+    { key: "Settlement", label: "Median Target (Recommended)", icon: DollarSign, value: formatCompact(model.recommendedSettlement), desc: "Resolve pre-suit at the policy-informed value — strongest risk-adjusted recovery.", recommended: true },
+    { key: "Trial", label: "Max Litigation Strategy", icon: Gavel, value: formatCompact(POLICY_LIMIT), desc: "Highest exposure, but added cost and timeline risk.", recommended: false },
   ];
 
   const supportingFindings = [
@@ -3542,10 +3670,17 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
   const [corridorStep, setCorridorStep] = useState(0);
   const [showGraph, setShowGraph] = useState(false); // done-state toggle: strategy ↔ context graph
   const [selectedPrecedent, setSelectedPrecedent] = useState<(typeof COMPARABLE_VERDICTS)[number] | null>(null);
-  const [precedentReasoningOpen, setPrecedentReasoningOpen] = useState(true);
-  const [precedentSuggestionOpen, setPrecedentSuggestionOpen] = useState(false);
+  const [precedentChatOpen, setPrecedentChatOpen] = useState(false);
   const [precedentAccordionOpen, setPrecedentAccordionOpen] = useState<Record<string, boolean>>({});
   const [supportingFindingsOpen, setSupportingFindingsOpen] = useState<Record<string, boolean>>({});
+
+  // Lock background scroll while the precedent drawer is open, so the dimmed
+  // backdrop always covers the full viewport regardless of scroll position.
+  useEffect(() => {
+    document.body.style.overflow = selectedPrecedent ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [selectedPrecedent]);
+
   const [showStrategyDashboard, setShowStrategyDashboard] = useState(false);
   const [selectedStrategy, setSelectedStrategy] = useState<"negotiation" | "settlement" | "trial">("settlement");
   const openStrategyDashboard = (strategy: "negotiation" | "settlement" | "trial") => {
@@ -3559,7 +3694,7 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
       title: "High-Velocity Pre-Litigation Demurrer Alignment",
       label: "Rapid Exit Strategy",
       heroTitle: "Rapid Exit Strategy (Negotiation)",
-      heroSubtitle: "For Salinas v. Amaro, the Rapid Exit Strategy bypasses extensive court dockets to target an expedited compromise layout of $242,175. Perfect for clients seeking fast liquidity and avoiding intrusive depositions.",
+      heroSubtitle: "For Estate of Miller vs Logistics Co., the Rapid Exit Strategy bypasses extensive court dockets to target an expedited compromise of $242,175. Suited to clients seeking fast liquidity and avoiding intrusive depositions.",
       summary: "Accept pre-litigation policy cap limits instantly to minimize trial risks and lawyer retainers.",
       recommendation: "Avoid public trial exposure; secure immediate settlement payout within 30–60 days.",
       timeline: "2–3 Months",
@@ -3597,7 +3732,7 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
       title: "Max Jury Pressure & Exemplary Punitive Multipliers",
       label: "Max Litigation Strategy",
       heroTitle: "Max Litigation Strategy (Trial)",
-      heroSubtitle: "A high-pressure litigation action alleging gross negligence and corporate standard omissions for Salinas v. Amaro. Focuses on records manipulation or fatigued operators to trigger a $2,663,925 punitive-level model.",
+      heroSubtitle: "A high-pressure litigation action alleging gross negligence and corporate standard omissions for Estate of Miller vs Logistics Co. Focuses on records manipulation or fatigued operators to trigger a $2,663,925 punitive-level model.",
       summary: "Take case to wrongful death or commercial jury trial, pleading gross disregard for full punitive multipliers.",
       recommendation: "Maximizes total recovery using punitive multi-district trial exposure and statutory counts.",
       timeline: "12–24 Months",
@@ -3612,7 +3747,6 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
       mitigations: ["Use documentary evidence", "Highlight regulatory breaches", "Focus on jury-impact themes"],
     },
   };
-  const [activeRoadmapStep, setActiveRoadmapStep] = useState(1);
   const roadmapStepsByStrategy = {
     negotiation: [
       {
@@ -3731,17 +3865,8 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
   } as const;
   const activeStrategy = strategyProfiles[selectedStrategy];
   const roadmapSteps = roadmapStepsByStrategy[selectedStrategy];
-  const visibleStrategyCases = selectedStrategy === "negotiation"
-    ? COMPARABLE_VERDICTS.filter((_, index) => [0, 1].includes(index))
-    : selectedStrategy === "settlement"
-      ? COMPARABLE_VERDICTS
-      : COMPARABLE_VERDICTS.filter((_, index) => [1, 2].includes(index));
   const strategyOptionMap = { Negotiation: "negotiation" as const, Settlement: "settlement" as const, Trial: "trial" as const };
   const startCorridor = () => { setCorridorStep(0); setShowGraph(false); setCorridorPhase("analyzing"); };
-
-  useEffect(() => {
-    setActiveRoadmapStep(1);
-  }, [selectedStrategy]);
 
   // Advance one processing step every ~420ms; hand off to "done" at the end.
   useEffect(() => {
@@ -3761,92 +3886,42 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
   if (showStrategyDashboard) {
     return (
       <div className="space-y-8">
-        <div className="rounded-2xl border border-line bg-white/80 p-5 shadow-[0_10px_35px_rgba(15,23,42,0.04)]">
+        <div className="lg-card p-5">
           <div className="relative flex items-center justify-between gap-3">
             <button type="button" onClick={closeStrategyDashboard} className="inline-flex items-center gap-2 text-sm font-medium text-deep hover:text-ink transition-colors">
               <ChevronLeft className="w-4 h-4" strokeWidth={1.75} /> Back to Intelligence
             </button>
-            <div className="absolute inset-x-0 text-center text-[18px] font-semibold text-ink">Intellegence Strategy Dashboard</div>
-            <div className="text-sm text-[#5B6B78]">Intelligence <span className="mx-1">›</span> Strategy Dashboard</div>
+            <div className="absolute inset-x-0 text-center section-header pointer-events-none">Intelligence Strategy Dashboard</div>
+            <div className="secondary-text">Intelligence <span className="mx-1">›</span> Strategy Dashboard</div>
           </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4">
-          <div className="rounded-3xl bg-ink p-6 text-white shadow-[0_18px_50px_rgba(15,23,42,0.16)]">
+          <div className="rounded-xl bg-ink p-6 text-white">
             <div className="grid grid-cols-1 xl:grid-cols-[1.7fr_0.9fr] gap-6">
               <div>
-                <div className="eyebrow text-brand mb-3">EXECUTION STRATEGY</div>
-                <div className="text-3xl font-semibold tracking-tight">{activeStrategy.title}</div>
-                <p className="text-soft mt-4 leading-relaxed max-w-2xl">{activeStrategy.heroSubtitle}</p>
+                <div className="eyebrow text-brand mb-3">Execution Strategy</div>
+                <div className="page-title text-white">{activeStrategy.title}</div>
+                <p className="text-soft text-sm mt-4 leading-relaxed max-w-2xl">{activeStrategy.heroSubtitle}</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6">
-                  <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-                    <div className="uppercase tracking-[0.18em] text-[11px] text-slate-400">Primary Advantage</div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                    <div className="eyebrow text-soft">Primary Advantage</div>
                     <div className="mt-3 text-sm leading-relaxed text-white">{activeStrategy.advantage}</div>
                   </div>
-                  <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-                    <div className="uppercase tracking-[0.18em] text-[11px] text-slate-400">Strategic Lever</div>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                    <div className="eyebrow text-soft">Strategic Lever</div>
                     <div className="mt-3 text-sm leading-relaxed text-white">{activeStrategy.lever}</div>
                   </div>
                 </div>
               </div>
-              <div className="rounded-3xl border border-white/10 bg-white/10 p-5">
+              <div className="rounded-xl border border-white/10 bg-white/10 p-5">
                 <div className="eyebrow text-brand mb-3">Outcome Model</div>
-                <div className="text-lg font-semibold">Recommended Outcome</div>
-                <div className="text-3xl font-bold mt-4 tabular-nums">{activeStrategy.recovery}</div>
+                <div className="card-title text-white">Recommended Outcome</div>
+                <div className="kpi-value text-white mt-4">{activeStrategy.recovery}</div>
                 <div className="text-sm text-soft mt-3">{activeStrategy.recommendation}</div>
                 <button type="button" onClick={() => goTo?.("negotiation")} className="btn btn-primary w-full mt-6 justify-center gap-2">
                   Generate Demand <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
                 </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="lg-card p-6">
-            <div className="flex items-center justify-between gap-4 flex-wrap">
-              <div>
-                <div className="eyebrow text-deep mb-2">Execution Roadmap</div>
-                <p className="text-sm text-[#5B6B78] max-w-2xl">A step-by-step execution plan for the selected litigation strategy.</p>
-              </div>
-              <div className="text-sm text-[#5B6B78]">Step {activeRoadmapStep} of {roadmapSteps.length}</div>
-            </div>
-            <div className="relative mt-6 pl-6">
-              <div className="absolute left-2 top-0 bottom-0 w-px bg-slate-200" />
-              <div className="space-y-4">
-                {roadmapSteps.map((step) => {
-                  const active = step.number === activeRoadmapStep;
-                  const completed = step.number < activeRoadmapStep;
-                  return (
-                    <button
-                      key={step.number}
-                      type="button"
-                      onClick={() => setActiveRoadmapStep(step.number)}
-                      className={`relative w-full rounded-3xl border p-5 text-left transition-all ${active ? "border-brand bg-brand/10 shadow-[0_12px_30px_rgba(63,181,215,0.18)]" : completed ? "border-line bg-slate-50 hover:bg-slate-100" : "border-line bg-white/90 hover:bg-slate-50"}`}
-                    >
-                      <span className="absolute left-0 top-5 h-5 w-5 rounded-full bg-brand text-[11px] font-semibold text-white flex items-center justify-center">{step.number}</span>
-                      <div className="ml-8">
-                        <div className="flex items-center justify-between gap-4">
-                          <div>
-                            <div className="text-sm font-semibold text-ink">STEP {step.number}</div>
-                            <div className="text-lg font-semibold text-ink mt-1">{step.title}</div>
-                          </div>
-                          <span className={`rounded-full px-3 py-1 text-[11px] font-semibold ${active ? "bg-brand text-white" : completed ? "bg-slate-200 text-slate-700" : "bg-slate-100 text-slate-700"}`}>{step.status}</span>
-                        </div>
-                        <p className="text-sm text-[#5B6B78] mt-3">{step.description}</p>
-                        <div className="grid grid-cols-2 gap-3 mt-4 text-sm text-ink">
-                          <div className="rounded-2xl border border-line bg-white/10 p-3">
-                            <div className="uppercase tracking-[0.18em] text-[10px] text-slate-500">Estimated Duration</div>
-                            <div className="mt-2 font-semibold">{step.duration}</div>
-                          </div>
-                          <div className="rounded-2xl border border-line bg-white/10 p-3">
-                            <div className="uppercase tracking-[0.18em] text-[10px] text-slate-500">Owner</div>
-                            <div className="mt-2 font-semibold">{step.owner}</div>
-                          </div>
-                        </div>
-                        <button type="button" className="btn btn-primary mt-4 w-full text-sm">{step.action}</button>
-                      </div>
-                    </button>
-                  );
-                })}
               </div>
             </div>
           </div>
@@ -3859,25 +3934,25 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
                   key={strategy.key}
                   type="button"
                   onClick={() => setSelectedStrategy(strategy.key)}
-                  className={`rounded-3xl border p-5 text-left transition-all duration-200 ${selected ? "border-brand bg-brand/10 shadow-[0_12px_30px_rgba(63,181,215,0.18)]" : "border-line bg-white/90 hover:bg-wash"}`}
+                  className={`rounded-xl border p-5 text-left transition-all duration-200 ${selected ? "border-brand bg-tint shadow-sm" : "border-line bg-white hover:bg-wash"}`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <div className="text-sm font-semibold text-ink">{strategy.label}</div>
-                      <div className="text-2xl font-semibold text-ink mt-3 tabular-nums">{strategy.recovery}</div>
+                      <div className="card-title">{strategy.label}</div>
+                      <div className="kpi-value mt-3">{strategy.recovery}</div>
                     </div>
                     {strategy.key === "settlement" && (
-                      <span className="rounded-full bg-brand/10 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-brand">Recommended</span>
+                      <span className="pill pill-complete shrink-0"><CheckCircle className="w-3 h-3" strokeWidth={1.75} /> Recommended</span>
                     )}
                   </div>
-                  <p className="text-sm text-[#5B6B78] mt-4">{strategy.summary}</p>
+                  <p className="secondary-text mt-4">{strategy.summary}</p>
                   <div className="grid grid-cols-2 gap-3 mt-5 text-sm text-ink">
-                    <div className="rounded-2xl border border-line bg-white/5 p-3">
-                      <div className="uppercase tracking-[0.18em] text-[11px] text-slate-500">Timeline</div>
+                    <div className="rounded-xl border border-line bg-offwhite p-3">
+                      <div className="eyebrow">Timeline</div>
                       <div className="mt-2 font-semibold">{strategy.timeline}</div>
                     </div>
-                    <div className="rounded-2xl border border-line bg-white/5 p-3">
-                      <div className="uppercase tracking-[0.18em] text-[11px] text-slate-500">Risk Level</div>
+                    <div className="rounded-xl border border-line bg-offwhite p-3">
+                      <div className="eyebrow">Risk Level</div>
                       <div className="mt-2 font-semibold">{strategy.riskLevel}</div>
                     </div>
                   </div>
@@ -3885,30 +3960,35 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
               );
             })}
           </div>
-        </div>
 
-        <div className="lg-card p-6">
-          <div className="eyebrow text-deep mb-3">Execution Plan</div>
-          <div className="space-y-3">
-            {activeStrategy.steps.map((step, index) => (
-              <div key={step} className="rounded-xl border border-line bg-offwhite p-4">
-                <div className="text-sm font-semibold text-ink">Step {index + 1}</div>
-                <div className="text-base font-medium text-ink mt-1">{step}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div id="strategy-dashboard-cases" className="lg-card p-6">
-          <div className="eyebrow text-deep mb-3">Supporting Historical Cases</div>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {visibleStrategyCases.map((v) => (
-              <div key={v.caseName} className="rounded-xl border border-line bg-offwhite p-4">
-                <div className="text-sm font-semibold text-ink">{v.caseName}</div>
-                <div className="text-lg font-bold text-ink mt-2 tabular-nums">{formatUSD(v.amount)}</div>
-                <div className="text-sm text-[#5B6B78] mt-2">{v.summary}</div>
-              </div>
-            ))}
+          <div className="lg-card bg-offwhite p-6">
+            <div className="eyebrow text-deep mb-2">Execution Roadmap</div>
+            <p className="secondary-text max-w-2xl">A step-by-step execution plan for the selected litigation strategy.</p>
+            <div className="space-y-4 mt-6">
+              {roadmapSteps.map((step) => (
+                <div key={step.number} className="rounded-xl border border-line bg-white p-5">
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="card-title">{step.title}</div>
+                    <span className={`pill shrink-0 ${step.status === "Completed" ? "pill-complete" : step.status === "In Progress" ? "pill-progress" : step.status === "Blocked" ? "pill-risk" : "pill-neutral"}`}>{step.status}</span>
+                  </div>
+                  <p className="secondary-text mt-3">{step.description}</p>
+                  <div className="grid grid-cols-3 gap-3 mt-4 text-sm text-ink">
+                    <div className="rounded-xl border border-line bg-offwhite p-3">
+                      <div className="eyebrow">Estimated Duration</div>
+                      <div className="mt-2 font-semibold">{step.duration}</div>
+                    </div>
+                    <div className="rounded-xl border border-line bg-offwhite p-3">
+                      <div className="eyebrow">Owner</div>
+                      <div className="mt-2 font-semibold">{step.owner}</div>
+                    </div>
+                    <div className="rounded-xl border border-line bg-offwhite p-3">
+                      <div className="eyebrow">Next Action</div>
+                      <div className="mt-2 font-semibold">{step.action}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -3945,9 +4025,9 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
   return (
     <div className="space-y-10">
       {/* ── 1 · Litigation Strategy Dashboard (case overview) ── */}
-      <div className="rounded-2xl border border-line bg-white/80 p-6 shadow-[0_10px_35px_rgba(15,23,42,0.04)] flex items-start justify-between gap-4 flex-wrap">
+      <div className="lg-card p-6 flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
-          <h2 className="text-[24px] font-semibold tracking-tight text-ink">Case Intelligence</h2>
+          <h2 className="section-header">Case Intelligence</h2>
         </div>
         <span className="pill pill-complete shrink-0">
           <span className="relative flex w-1.5 h-1.5">
@@ -3969,7 +4049,7 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
             </div>
             <div className="kpi-value">{c.value}</div>
             {typeof c.bar === "number" && (
-              <div className="mt-2.5 h-1.5 rounded-full bg-[#EEF3F6] overflow-hidden">
+              <div className="mt-2.5 h-1.5 rounded-full bg-track overflow-hidden">
                 <div className="h-full rounded-full bg-brand" style={{ width: `${Math.min(100, c.bar)}%` }} />
               </div>
             )}
@@ -3983,7 +4063,7 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
         <div className="pl-5">
           <div className="eyebrow text-brand mb-2">STRATEGIC LITIGATION VALUATION BRIEF</div>
           <p className="body-text leading-relaxed">
-            This matter anchors <strong className="font-semibold text-ink">high recovery potential</strong> in Harris County because the timeline of negligence is linear and well-documented. For <strong className="font-semibold text-ink">Estate of Miller</strong>, the defensive narrative of pre-existing comorbidities is medically undermined by direct clinical omissions. Symmetrical neglect of rotational safety or sudden motor safety duties triggers <strong className="font-semibold text-ink">high jury outrage factors</strong> in local jurisdictions.
+            This matter anchors <strong className="font-semibold text-ink">high recovery potential</strong> in Cook County because the timeline of negligence is linear and well-documented. For <strong className="font-semibold text-ink">Estate of Miller</strong>, the defensive narrative of pre-existing comorbidities is medically undermined by direct clinical omissions. Symmetrical neglect of rotational safety or sudden motor safety duties triggers <strong className="font-semibold text-ink">high jury outrage factors</strong> in local jurisdictions.
           </p>
         </div>
       </div>
@@ -4052,9 +4132,6 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
                 <div className="flex items-center gap-2 mt-6 flex-wrap">
                   <button onClick={() => openStrategyDashboard("settlement")} className="btn btn-primary gap-2">
                     Open Strategy Dashboard <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
-                  </button>
-                  <button onClick={() => setShowGraph((v) => !v)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-white/20 text-white text-sm font-medium hover:bg-white/10 transition-colors">
-                    {showGraph ? "View Corridor" : "View Context Graph"}
                   </button>
                 </div>
               </>
@@ -4139,7 +4216,7 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
                         </div>
                         {o.recommended && <span className="inline-flex items-center gap-1 rounded-full bg-brand/20 border border-brand/40 px-2 py-0.5 text-[10px] font-semibold text-brand uppercase tracking-wide"><CheckCircle className="w-3 h-3" strokeWidth={1.75} /> Recommended</span>}
                       </div>
-                      <div className="text-white font-semibold">{o.key}</div>
+                      <div className="text-white font-semibold">{o.label}</div>
                       <div className="text-lg font-bold text-white tabular-nums mt-0.5">{o.value}</div>
                       <p className="text-soft text-xs leading-relaxed mt-1.5 flex-1">{o.desc}</p>
                     </button>
@@ -4154,7 +4231,7 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
       {/* ── 3 · Precedent Analysis — historical cases used ── */}
       <div className="lg-card p-6">
         <div className="mb-5">
-          <h2 className="section-header">SIMILAR PAST CASES</h2>
+          <h2 className="section-header">Similar Past Cases</h2>
           <p className="secondary-text mt-1 max-w-2xl">AI found historical cases most similar to the current matter to support the recommended litigation strategy.</p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
@@ -4197,7 +4274,7 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
                 </div>
 
                 <div className="mt-auto pt-4 flex justify-end">
-                  <button onClick={() => setSelectedPrecedent(v)} className="inline-flex items-center gap-1.5 text-sm font-medium text-deep hover:text-ink transition-colors">
+                  <button onClick={() => { setSelectedPrecedent(v); setPrecedentChatOpen(false); }} className="inline-flex items-center gap-1.5 text-sm font-medium text-deep hover:text-ink transition-colors">
                     <Eye className="w-4 h-4" strokeWidth={1.75} /> View Details
                     <ArrowRight className="w-3.5 h-3.5" strokeWidth={1.75} />
                   </button>
@@ -4214,7 +4291,7 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
           <div className="fixed top-0 right-0 h-full w-[460px] max-w-[92vw] bg-white shadow-xl z-50 flex flex-col">
             <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-line">
               <div className="min-w-0">
-                <div className="eyebrow mb-1">PRECEDENT CASE</div>
+                <div className="eyebrow mb-1">Precedent Case</div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <h2 className="card-title">{selectedPrecedent.caseName}</h2>
                   <span className="pill pill-complete">{selectedPrecedent.matchScore}% Match</span>
@@ -4223,71 +4300,72 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
               <button onClick={() => setSelectedPrecedent(null)} className="p-1.5 hover:bg-tint rounded-lg transition-colors shrink-0"><X className="w-5 h-5 text-[#5B6B78]" strokeWidth={1.75} /></button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-5 space-y-5">
-              <div className="text-xs text-[#5B6B78] flex items-center gap-2.5 flex-wrap">
-                <span>{selectedPrecedent.matchScore}% Match <span className="font-semibold text-ink">•</span> Commercial Vehicle <span className="font-semibold text-ink">•</span> Cervical Injury</span>
-              </div>
-
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-offwhite p-3.5">
-                <div>
-                  <div className="eyebrow mb-0.5">SETTLEMENT OUTCOME</div>
-                  <div className="text-xl font-bold text-ink tabular-nums">{formatUSD(selectedPrecedent.amount)}</div>
-                  <div className="text-xs text-[#8A98A3] mt-0.5">Resolved through Pre-Trial Settlement</div>
-                </div>
-              </div>
-
-              <div>
-                <div className="eyebrow mb-1.5">SIMILARITY DRIVERS</div>
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="pill pill-neutral">Commercial Vehicle</span>
-                  <span className="pill pill-neutral">Commercial Carrier</span>
-                  <span className="pill pill-neutral">Cervical Injury</span>
-                  <span className="pill pill-neutral">Long-Term Treatment</span>
-                  <span className="pill pill-neutral">Cook County</span>
-                  <span className="pill pill-neutral">Strong Liability</span>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-line overflow-hidden">
-                <button onClick={() => setPrecedentReasoningOpen((v) => !v)} className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-wash transition-colors">
-                  <span className="flex items-center gap-1.5 text-xs font-semibold text-ink"><Sparkles className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> AI Summary</span>
-                  <ChevronDown className={`w-4 h-4 text-deep transition-transform ${precedentReasoningOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
-                </button>
-                {precedentReasoningOpen && (
-                  <div className="px-3.5 pb-3.5 pt-2 border-t border-line bg-tint">
-                    <div className="eyebrow mb-1.5">Why {selectedPrecedent.matchScore}% Match</div>
-                    <p className="secondary-text leading-relaxed">
-                      LECO identified this precedent because it closely aligns with Estate of Miller across multiple legal and factual dimensions. Both matters involve catastrophic injuries, clearly documented negligence, strong liability evidence, and long-term medical impact. The comparable jurisdiction and settlement outcome make this case a reliable benchmark for estimating recovery potential and supporting the recommended settlement corridor.
-                    </p>
+            {precedentChatOpen ? (
+              <PrecedentChatPanel caseName={selectedPrecedent.caseName} onBack={() => setPrecedentChatOpen(false)} />
+            ) : (
+              <>
+                <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                  <div className="text-xs text-[#5B6B78] flex items-center gap-2.5 flex-wrap">
+                    <span>{selectedPrecedent.matchScore}% Match <span className="font-semibold text-ink">•</span> Commercial Vehicle <span className="font-semibold text-ink">•</span> Cervical Injury</span>
                   </div>
-                )}
-              </div>
 
-              <div className="rounded-xl border border-line overflow-hidden">
-                <button onClick={() => setPrecedentSuggestionOpen((v) => !v)} className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-wash transition-colors">
-                  <span className="flex items-center gap-1.5 text-xs font-semibold text-ink"><Sparkles className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> AI Suggestions</span>
-                  <ChevronDown className={`w-4 h-4 text-deep transition-transform ${precedentSuggestionOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
-                </button>
-                {precedentSuggestionOpen && (
-                  <div className="px-3.5 pb-3.5 pt-2 border-t border-line bg-offwhite space-y-2.5">
-                    <div className="rounded-lg bg-white border border-line p-2.5">
-                      <div className="eyebrow mb-1">Recommended Use</div>
-                      <ul className="space-y-1.5 text-sm text-ink">
-                        <li>• Support the initial settlement demand with a comparable recovery outcome.</li>
-                        <li>• Reference this case when explaining long-term injury valuation.</li>
-                        <li>• Strengthen liability discussions using similar negligence findings.</li>
-                        <li>• Cite this precedent during negotiation to reinforce the recommended settlement corridor.</li>
-                      </ul>
+                  <div className="flex items-center justify-between gap-3 rounded-xl border border-line bg-offwhite p-3.5">
+                    <div>
+                      <div className="eyebrow mb-0.5">Settlement Outcome</div>
+                      <div className="text-xl font-bold text-ink tabular-nums">{formatUSD(selectedPrecedent.amount)}</div>
+                      <div className="text-xs text-[#8A98A3] mt-0.5">Resolved through Pre-Trial Settlement</div>
                     </div>
                   </div>
-                )}
-              </div>
-            </div>
 
-            <div className="border-t border-line p-4 flex items-center gap-2">
-              <button className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg bg-white border border-line text-ink text-sm font-medium hover:bg-wash transition-colors">💬 Chat with AI</button>
-              <button className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg bg-brand hover:bg-deep text-white text-sm font-semibold transition-colors">✨ View Insights</button>
-            </div>
+                  <div>
+                    <div className="eyebrow mb-1.5">Similarity Drivers</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className="pill pill-neutral">Commercial Vehicle</span>
+                      <span className="pill pill-neutral">Commercial Carrier</span>
+                      <span className="pill pill-neutral">Cervical Injury</span>
+                      <span className="pill pill-neutral">Long-Term Treatment</span>
+                      <span className="pill pill-neutral">Cook County</span>
+                      <span className="pill pill-neutral">Strong Liability</span>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-line overflow-hidden">
+                    <div className="flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-semibold text-ink border-b border-line bg-tint">
+                      <Sparkles className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> AI Summary
+                    </div>
+                    <div className="px-3.5 py-3 bg-tint">
+                      <div className="eyebrow mb-1.5">Why {selectedPrecedent.matchScore}% Match</div>
+                      <p className="secondary-text leading-relaxed">
+                        LECO identified this precedent because it closely aligns with Estate of Miller across multiple legal and factual dimensions. Both matters involve catastrophic injuries, clearly documented negligence, strong liability evidence, and long-term medical impact. The comparable jurisdiction and settlement outcome make this case a reliable benchmark for estimating recovery potential and supporting the recommended settlement corridor.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-line overflow-hidden">
+                    <div className="flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-semibold text-ink border-b border-line bg-offwhite">
+                      <Sparkles className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> AI Suggestions
+                    </div>
+                    <div className="px-3.5 py-3 bg-offwhite space-y-2.5">
+                      <div className="rounded-lg bg-white border border-line p-2.5">
+                        <div className="eyebrow mb-1">Recommended Use</div>
+                        <ul className="space-y-1.5 text-sm text-ink">
+                          <li>• Support the initial settlement demand with a comparable recovery outcome.</li>
+                          <li>• Reference this case when explaining long-term injury valuation.</li>
+                          <li>• Strengthen liability discussions using similar negligence findings.</li>
+                          <li>• Cite this precedent during negotiation to reinforce the recommended settlement corridor.</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-line p-4">
+                  <button onClick={() => setPrecedentChatOpen(true)} className="btn btn-primary w-full justify-center gap-2">
+                    <Bot className="w-4 h-4" strokeWidth={1.75} /> Chat with AI
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </>
       )}
@@ -4295,7 +4373,7 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
       {/* ── 4 · Supporting Findings — strategic insights derived from negligence & violations ── */}
       <div className="lg-card p-6">
         <div className="mb-5">
-          <h2 className="section-header">SUPPORTING FINDINGS</h2>
+          <h2 className="section-header">Supporting Findings</h2>
           <p className="secondary-text mt-1 max-w-2xl">Insights Derived from Negligence &amp; Violations</p>
           <p className="secondary-text mt-1 max-w-2xl">These case findings increase settlement leverage and strengthen the recommended litigation strategy.</p>
         </div>

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { StageNavigator } from "../components/StageNavigator";
 import {
   ChevronLeft, ChevronRight, ChevronDown, CheckCircle, FileText, Eye, Download, X,
-  AlertCircle, ArrowRight, User, Building2, Shield, Scale, Stethoscope,
+  AlertCircle, ArrowRight, User, Building2, Shield, Scale, Stethoscope, Gavel,
   Users, Bot, Sparkles
 } from "lucide-react";
 import { Button } from "../components/ui/button";
@@ -10,6 +10,7 @@ import { DocActions, DocumentWorkspaceModal } from "../components/DocumentWorksp
 import {
   CaseDocument, classifyDocuments, generateAnalysisFindings, AnalysisFinding,
 } from "../types/case";
+import { VIOLATION_CARDS, VIOLATION_SEVERITY_PILL } from "../workspace/WorkspaceTabs";
 
 /* MARKER-MAKE-KIT-INVOKED */
 
@@ -140,7 +141,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
   // Index of the timeline event shown in the detail drawer (null = closed)
   const [drawerEventIndex, setDrawerEventIndex] = useState<number | null>(null);
   // Discovered Signals: active tab + whether each tab is expanded past the first 3
-  const [signalTab, setSignalTab] = useState<"liability" | "injury">("liability");
+  const [signalTab, setSignalTab] = useState<"liability" | "injury" | "violations">("liability");
   const [signalExpanded, setSignalExpanded] = useState<{ liability: boolean; injury: boolean }>({ liability: false, injury: false });
   // Which signal cards have their Evidence dropdown expanded (keyed by "tab-index").
   const [evidenceOpen, setEvidenceOpen] = useState<Set<string>>(new Set());
@@ -172,6 +173,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
   const injurySignals = signals.filter((s) => s.kind === "injury");
   const liabilityCount = liabilitySignals.length;
   const injuryCount = injurySignals.length;
+  const violationCount = VIOLATION_CARDS.length;
   const verifiedCount = verifiedDocuments.length || 12;
 
   const defaultCaseData = {
@@ -266,7 +268,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
   // Analysis Complete panel → smooth-scroll navigation into the matching section
   const scrollToId = (id: string) =>
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  const goToSignals = (tab: "liability" | "injury") => {
+  const goToSignals = (tab: "liability" | "injury" | "violations") => {
     setSignalTab(tab);
     setTimeout(() => scrollToId("signals-section"), 60);
   };
@@ -446,7 +448,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
         <div className="space-y-8 min-w-0 lg:order-1">
 
         {/* ── Discovered Liability & Injury Signals ── */}
-        <div id="signals-section" className="lg-card p-6 scroll-mt-[150px]">
+        <div id="signals-section" className="lg-card bg-offwhite p-6 scroll-mt-[150px]">
             <h2 className="section-header mb-1">Discovered Liability & Injury Signals</h2>
             <p className="secondary-text mb-5">The most important liability and injury findings identified by LECO — each links to the verified evidence behind it.</p>
 
@@ -455,6 +457,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
               {([
                 { key: "liability", label: "Liability Signals", count: liabilityCount },
                 { key: "injury", label: "Injury Signals", count: injuryCount },
+                { key: "violations", label: "Violation Analysis", count: violationCount },
               ] as const).map((tab) => {
                 const isActive = signalTab === tab.key;
                 return (
@@ -473,7 +476,29 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
               })}
             </div>
 
-            {(() => {
+            {signalTab === "violations" ? (
+              <div className="space-y-4">
+                <p className="secondary-text -mt-1">
+                  LECO cross-referenced the case record against the governing traffic-safety statutes and identified {violationCount} applicable violations. Each carries through to the Violations tab in the Case Workspace for the full statutory analysis, evidence, and defense-rebuttal detail.
+                </p>
+                <div className="divide-y divide-line rounded-xl border border-line overflow-hidden">
+                  {VIOLATION_CARDS.map((v) => (
+                    <div key={v.id} className="flex items-start gap-3 p-4 bg-white">
+                      <div className="w-9 h-9 rounded-lg bg-tint flex items-center justify-center shrink-0">
+                        <Gavel className="w-4 h-4 text-deep" strokeWidth={1.75} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="card-title leading-snug">{v.title}</h3>
+                          <span className={VIOLATION_SEVERITY_PILL[v.severity]}>{v.severity}</span>
+                        </div>
+                        <p className="secondary-text mt-1 leading-relaxed">{v.description}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (() => {
               const list = signalTab === "liability" ? liabilitySignals : injurySignals;
               const expanded = signalExpanded[signalTab];
               const visible = expanded ? list : list.slice(0, 3);
@@ -646,6 +671,7 @@ export function AnalysisPage({ caseData, documents = [], onStageClick, onBackToI
               {([
                 { value: liabilityCount, label: "Liability Signals", onClick: () => goToSignals("liability") },
                 { value: injuryCount, label: "Injury Signals", onClick: () => goToSignals("injury") },
+                { value: violationCount, label: "Violation Analysis", onClick: () => goToSignals("violations") },
                 { value: verifiedCount, label: "Verified Evidence", onClick: () => scrollToId("evidence-verification") },
               ] as const).map(({ value, label, onClick }) => (
                 <button
