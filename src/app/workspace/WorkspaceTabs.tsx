@@ -39,6 +39,7 @@ interface TabProps {
   documents: CaseDocument[];
   goTo: (tab: string) => void;
   goToValuation?: () => void;
+  onGenerateDemand?: (strategyLabel: string, amount: number) => void;
 }
 
 function formatUSD(n: number) {
@@ -1474,8 +1475,8 @@ function fmtMult(m: number) {
   return `${Number(m.toFixed(2))}×`;
 }
 
-type Severity = "Critical" | "High" | "Moderate" | "Low";
-type DamageFactor = {
+export type Severity = "Critical" | "High" | "Moderate" | "Low";
+export type DamageFactor = {
   category: string;
   severity: Severity;
   aiMultiplier: number;   // AI-recommended contribution to the overall multiplier
@@ -1498,7 +1499,7 @@ type DamageFactor = {
 // Non-economic damage factors the recommended multiplier is applied to. Each
 // carries an AI-assigned severity, a recommended contribution, the evidence
 // behind it, and the strongest opposing argument. AI contributions sum to 9×.
-const DA_DAMAGE_FACTORS: DamageFactor[] = [
+export const DA_DAMAGE_FACTORS: DamageFactor[] = [
   {
     category: "Pain & Suffering", severity: "Critical", aiMultiplier: 2, confidence: 94, docCount: 18,
     drivers: ["Permanent Injury", "Surgical Intervention", "Chronic Pain", "MRI Verified"],
@@ -1571,7 +1572,7 @@ const DA_STRATEGY_FACTORS = ["Clear Liability", "Severe Injuries", "Strong Suppo
 // Damages table above), and the supporting documents behind it. `docs` resolves
 // to real evidence files for the shared Document Workspace; `docCount` is the
 // full count of supporting documents on file.
-const DAMAGE_EVIDENCE = [
+export const DAMAGE_EVIDENCE = [
   {
     category: "Medical Bills", amount: 87500, docCount: 18, primary: "Hospital_Bill.pdf",
     docs: ["hospital_medical_records.pdf", "ER_Bills.pdf", "MRI_Report_2026.pdf"],
@@ -3538,7 +3539,7 @@ export function EvidenceRepositoryTab({ documents }: TabProps) {
 // corridor, an AI valuation brief, comparable verdicts, a negligence audit, and
 // attorney trial-prep directives — all built from the existing case model.
 
-const POLICY_LIMIT = 2_000_000;
+export const POLICY_LIMIT = 2_000_000;
 
 // ── Corridor simulation — AI processing steps, context graph, and result ──
 const CORRIDOR_STEPS = [
@@ -3584,7 +3585,7 @@ const VALUATION_BRIEF: { label: string; icon: any; text: string }[] = [
 
 // Local comparable verdicts / settlements matched to this case profile. `labels`
 // are the short category chips shown above each card.
-const COMPARABLE_VERDICTS: { caseName: string; amount: number; summary: string; matchScore: number; labels: string[]; tags: string[]; whyThisMatters: string }[] = [
+export const COMPARABLE_VERDICTS: { caseName: string; amount: number; summary: string; matchScore: number; labels: string[]; tags: string[]; whyThisMatters: string }[] = [
   {
     caseName: "Reyes v. Interstate Freight Lines",
     amount: 1_750_000,
@@ -3622,7 +3623,14 @@ const TRIAL_DIRECTIVES: { title: string; icon: any; items: string[] }[] = [
   { title: "Trial Preparation", icon: ClipboardList, items: ["Prepare demonstrative reconstruction exhibits", "Draft motions in limine on comparative fault", "Assemble the medical-chronology exhibit binder", "Develop jury themes on commercial-carrier negligence"] },
 ];
 
-export function DemandPackageTab({ model, goTo }: TabProps) {
+export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
+  // "Generated From" label + numeric estimate for whichever strategy is active
+  // when a demand package is generated (used by both Generate Demand CTAs below).
+  const strategyStageLabel: Record<"negotiation" | "settlement" | "trial", string> = {
+    negotiation: "Negotiation Strategy",
+    settlement: "Settlement Strategy",
+    trial: "Trial Strategy",
+  };
   const consumption = Math.round((model.recommendedSettlement / POLICY_LIMIT) * 100);
   const dashboard = [
     { icon: ShieldCheck, label: "Policy Coverage", value: formatUSD(POLICY_LIMIT), sub: "Commercial auto liability limit" },
@@ -3919,7 +3927,11 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
                 <div className="card-title text-white">Recommended Outcome</div>
                 <div className="kpi-value text-white mt-4">{activeStrategy.recovery}</div>
                 <div className="text-sm text-soft mt-3">{activeStrategy.recommendation}</div>
-                <button type="button" onClick={() => goTo?.("negotiation")} className="btn btn-primary w-full mt-6 justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onGenerateDemand?.(strategyStageLabel[selectedStrategy], Number(activeStrategy.recovery.replace(/[^0-9.]/g, "")))}
+                  className="btn btn-primary w-full mt-6 justify-center gap-2"
+                >
                   Generate Demand <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
                 </button>
               </div>
@@ -4464,7 +4476,10 @@ export function DemandPackageTab({ model, goTo }: TabProps) {
           <h2 className="section-header text-white">Ready to assemble the demand</h2>
           <p className="text-soft text-sm mt-1 max-w-xl">Compile the recommended strategy, precedent, and findings into an attorney-ready demand package.</p>
         </div>
-        <button onClick={() => goTo?.("negotiation")} className="btn btn-primary gap-2 shrink-0">
+        <button
+          onClick={() => onGenerateDemand?.(strategyStageLabel[selectedStrategy], Number(activeStrategy.recovery.replace(/[^0-9.]/g, "")))}
+          className="btn btn-primary gap-2 shrink-0"
+        >
           <FileSignature className="w-4 h-4" strokeWidth={1.75} /> Generate Demand
         </button>
       </div>

@@ -413,4 +413,15 @@
     transition: background-color 150ms ease;
   }
   .lg-row:hover { background: var(--lg-tint); }
+
+  /* ---- Newly-created item highlight (e.g. a just-generated package) ---- */
+  .lg-highlight-in {
+    animation: lgHighlightIn 2.4s ease-out;
+  }
+}
+
+@keyframes lgHighlightIn {
+  0% { background-color: var(--lg-tint); box-shadow: 0 0 0 2px var(--lg-ring) inset; }
+  70% { background-color: var(--lg-tint); box-shadow: 0 0 0 2px var(--lg-ring) inset; }
+  100% { background-color: transparent; box-shadow: 0 0 0 0 transparent inset; }
 }

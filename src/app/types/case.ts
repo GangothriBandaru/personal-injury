@@ -14,6 +14,24 @@ export interface AttorneyNote {
   date: string;
 }
 
+export const PACKAGE_STATUSES = ["Draft", "Under Review", "Ready to Send", "Sent", "Negotiation", "Closed"] as const;
+export type PackageStatus = (typeof PACKAGE_STATUSES)[number];
+
+export interface DemandPackage {
+  id: string;
+  number: number;
+  label: string;
+  suffix?: string;
+  status: PackageStatus;
+  generatedFrom: string;
+  generatedAt: string;
+  estimatedAmount: number;
+  docCount: number;
+  version: string;
+  notes?: string;
+  isNew?: boolean;
+}
+
 export interface PipelineState {
   // Retainer
   retainerStatus: "not-sent" | "sent" | "signed";

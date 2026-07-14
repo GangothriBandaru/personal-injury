@@ -1,11 +1,12 @@
-import { useState } from "react";
-import { ChevronLeft, ChevronRight, FileSignature, FolderOpen, Settings2 } from "lucide-react";
-import type { AnalysisFinding, CaseDocument } from "../types/case";
+import { useEffect, useState } from "react";
+import { ChevronLeft, ChevronRight, FileSignature, FolderOpen, Settings2, Loader2, CheckCircle, Circle } from "lucide-react";
+import type { AnalysisFinding, CaseDocument, DemandPackage } from "../types/case";
 import {
   WorkspaceModel,
   OverviewTab, MedicalTimelineTab, EconomicDamagesTab, NonEconomicDamagesTab,
   LiabilityAnalysisTab, EvidenceRepositoryTab, DemandPackageTab, NegotiationTab,
 } from "../workspace/WorkspaceTabs";
+import { DemandSpacePage } from "./DemandSpacePage";
 
 interface CaseWorkspacePageProps {
   caseData?: any;
@@ -30,8 +31,75 @@ const TABS = [
 const BASE_ECONOMIC = 161450;
 const MULTIPLIER = 9;
 
+// Sequential steps shown while a demand package is being generated.
+const GENERATE_STEPS = [
+  "Collecting verified medical records...",
+  "Compiling economic damages...",
+  "Calculating non-economic damages...",
+  "Linking negligence findings...",
+  "Applying legal statutes...",
+  "Matching historical cases...",
+  "Drafting demand letter...",
+  "Organizing supporting exhibits...",
+  "Building final demand package...",
+];
+
 export function CaseWorkspacePage({ caseData, analysisFindings = [], documents = [], onBackToIntake, onNavigateToValuation }: CaseWorkspacePageProps) {
   const [activeTab, setActiveTab] = useState("overview");
+
+  // ── Generate Demand → Demand Space workflow ──
+  const [demandPackages, setDemandPackages] = useState<DemandPackage[]>([]);
+  const [genPhase, setGenPhase] = useState<"idle" | "running" | "success">("idle");
+  const [genStep, setGenStep] = useState(0);
+  const [pendingGen, setPendingGen] = useState<{ strategyLabel: string; amount: number } | null>(null);
+
+  const startGenerateDemand = (strategyLabel: string, amount: number) => {
+    setPendingGen({ strategyLabel, amount });
+    setGenStep(0);
+    setGenPhase("running");
+  };
+
+  // Advance one processing step at a time; hand off to "success" at the end.
+  useEffect(() => {
+    if (genPhase !== "running") return;
+    if (genStep >= GENERATE_STEPS.length) {
+      const t = setTimeout(() => setGenPhase("success"), 300);
+      return () => clearTimeout(t);
+    }
+    const t = setTimeout(() => setGenStep((s) => s + 1), 520);
+    return () => clearTimeout(t);
+  }, [genPhase, genStep]);
+
+  // After the success beat, create the package and jump into Demand Space.
+  useEffect(() => {
+    if (genPhase !== "success" || !pendingGen) return;
+    const t = setTimeout(() => {
+      setDemandPackages((prev) => {
+        const number = prev.length + 1;
+        const pkg: DemandPackage = {
+          id: `pkg-${number}-${Date.now()}`,
+          number,
+          label: `Demand Package #${String(number).padStart(3, "0")}`,
+          status: "Draft",
+          generatedFrom: pendingGen.strategyLabel,
+          generatedAt: `Today • ${new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`,
+          estimatedAmount: pendingGen.amount,
+          docCount: 42,
+          version: "1.0",
+          isNew: true,
+        };
+        return [pkg, ...prev.map((p) => ({ ...p, isNew: false }))];
+      });
+      setActiveTab("demandspace");
+      setGenPhase("idle");
+      setPendingGen(null);
+    }, 1100);
+    return () => clearTimeout(t);
+  }, [genPhase, pendingGen]);
+
+  const updateDemandPackage = (id: string, patch: Partial<DemandPackage>) => {
+    setDemandPackages((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+  };
 
   const nonEconomic = BASE_ECONOMIC * MULTIPLIER;
   const model: WorkspaceModel = {
@@ -53,7 +121,7 @@ export function CaseWorkspacePage({ caseData, analysisFindings = [], documents =
     estimatedHigh: caseData?.estimatedHigh ?? 1372325,
   };
 
-  const tabProps = { model, findings: analysisFindings, documents, goTo: setActiveTab, goToValuation: onNavigateToValuation };
+  const tabProps = { model, findings: analysisFindings, documents, goTo: setActiveTab, goToValuation: onNavigateToValuation, onGenerateDemand: startGenerateDemand };
 
   const renderTab = () => {
     switch (activeTab) {
@@ -64,6 +132,13 @@ export function CaseWorkspacePage({ caseData, analysisFindings = [], documents =
       case "evidence": return <EvidenceRepositoryTab {...tabProps} />;
       case "demand": return <DemandPackageTab {...tabProps} />;
       case "negotiation": return <NegotiationTab {...tabProps} />;
+      case "demandspace": return (
+        <DemandSpacePage
+          model={model}
+          packages={demandPackages}
+          onUpdatePackage={updateDemandPackage}
+        />
+      );
       default: return <OverviewTab {...tabProps} />;
     }
   };
@@ -92,7 +167,7 @@ export function CaseWorkspacePage({ caseData, analysisFindings = [], documents =
               <h1 className="page-title">{model.caseName}</h1>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <button onClick={() => setActiveTab("demand")} className="btn btn-primary gap-2">
+              <button onClick={() => setActiveTab("demandspace")} className="btn btn-secondary gap-2">
                 <FileSignature className="w-4 h-4" strokeWidth={1.75} /> Demand Space
               </button>
               <button onClick={() => setActiveTab("evidence")} className="btn btn-secondary gap-2">
@@ -134,6 +209,49 @@ export function CaseWorkspacePage({ caseData, analysisFindings = [], documents =
       <div className="max-w-[1400px] mx-auto px-8 py-10">
         {renderTab()}
       </div>
+
+      {/* ── Generate Demand: full-screen generating / success overlay ── */}
+      {genPhase !== "idle" && (
+        <div className="fixed inset-0 z-[100] bg-ink flex items-center justify-center p-6">
+          <div className="w-full max-w-md text-center">
+            {genPhase === "running" ? (
+              <>
+                <div className="w-14 h-14 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center mx-auto mb-6">
+                  <Loader2 className="w-6 h-6 text-brand animate-spin" strokeWidth={1.75} />
+                </div>
+                <h2 className="page-title text-white">Generating Demand Package</h2>
+                <p className="text-soft text-sm mt-2">Compiling legal documents, evidence, and settlement demand package.</p>
+                <div className="mt-8 space-y-2.5 text-left">
+                  {GENERATE_STEPS.map((label, i) => {
+                    const done = i < genStep;
+                    const active = i === genStep;
+                    return (
+                      <div key={label} className={`flex items-center gap-2.5 text-sm transition-opacity duration-300 ${done || active ? "opacity-100" : "opacity-30"}`}>
+                        {done ? (
+                          <CheckCircle className="w-4 h-4 text-brand shrink-0" strokeWidth={1.75} />
+                        ) : active ? (
+                          <Loader2 className="w-4 h-4 text-brand shrink-0 animate-spin" strokeWidth={1.75} />
+                        ) : (
+                          <Circle className="w-4 h-4 text-white/30 shrink-0" strokeWidth={1.75} />
+                        )}
+                        <span className={done ? "text-soft" : "text-white"}>{label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="w-14 h-14 rounded-2xl bg-brand/15 border border-brand/30 flex items-center justify-center mx-auto mb-6">
+                  <CheckCircle className="w-7 h-7 text-brand" strokeWidth={1.75} />
+                </div>
+                <h2 className="page-title text-white">Demand Package Generated Successfully</h2>
+                <p className="text-soft text-sm mt-2">Opening Demand Space...</p>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
