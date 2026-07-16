@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FileSignature, Eye, Pencil, Send, ArrowRight } from "lucide-react";
+import { FileSignature, Eye, Pencil, Send, ArrowRight, ChevronLeft } from "lucide-react";
 import type { DemandPackage, PackageStatus } from "../types/case";
 import type { WorkspaceModel } from "../workspace/WorkspaceTabs";
 import { DemandPackageEditorPage } from "./DemandPackageEditorPage";
@@ -22,9 +22,10 @@ interface DemandSpacePageProps {
   model: WorkspaceModel;
   packages: DemandPackage[];
   onUpdatePackage: (id: string, patch: Partial<DemandPackage>) => void;
+  onBack: () => void;
 }
 
-export function DemandSpacePage({ model, packages, onUpdatePackage }: DemandSpacePageProps) {
+export function DemandSpacePage({ model, packages, onUpdatePackage, onBack }: DemandSpacePageProps) {
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [editingPackageId, setEditingPackageId] = useState<string | null>(null);
   const [sendId, setSendId] = useState<string | null>(null);
@@ -39,23 +40,42 @@ export function DemandSpacePage({ model, packages, onUpdatePackage }: DemandSpac
     setSendId(null);
   };
 
-  // ── Demand Package Editor — full-screen, replaces the library view ──
+  // ── Demand Letter editor — only the letter exists at this stage, so it
+  // always reopens in letter-only mode, restoring the saved content and
+  // scroll position exactly where the attorney left off. ──
   if (editingPkg) {
     return (
       <DemandPackageEditorPage
         pkg={editingPkg}
         model={model}
+        letterOnly
+        initialLetterHtml={editingPkg.letterHtml}
+        initialScrollTop={editingPkg.letterScrollTop}
         onClose={() => setEditingPackageId(null)}
-        onSaveNotes={(notes) => onUpdatePackage(editingPkg.id, { notes })}
+        onSaveLetter={(html, scrollTop) => {
+          const nextVersion = Math.floor(parseFloat(editingPkg.version || "1.0")) + 1;
+          onUpdatePackage(editingPkg.id, { letterHtml: html, letterScrollTop: scrollTop, version: `${nextVersion}.0` });
+          setEditingPackageId(null);
+        }}
       />
     );
   }
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="page-title">Demand Space</h1>
-        <p className="secondary-text mt-1">Manage, review, edit, and send AI-generated demand packages.</p>
+      <div className="lg-card p-5">
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <button type="button" onClick={onBack} className="inline-flex items-center gap-2 text-sm font-medium text-deep hover:text-ink transition-colors">
+            <ChevronLeft className="w-4 h-4" strokeWidth={1.75} /> Back to Intelligence
+          </button>
+          <div className="secondary-text">Intelligence <span className="mx-1">›</span> Demand Space</div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl bg-tint flex items-center justify-center shrink-0">
+            <FileSignature className="w-5 h-5 text-deep" strokeWidth={1.75} />
+          </div>
+          <h1 className="page-title">Demand Space</h1>
+        </div>
       </div>
 
       {packages.length === 0 ? (
@@ -108,7 +128,7 @@ export function DemandSpacePage({ model, packages, onUpdatePackage }: DemandSpac
                     <Eye className="w-4 h-4" strokeWidth={1.75} /> Preview Package
                   </button>
                   <button onClick={() => setEditingPackageId(pkg.id)} className="btn btn-secondary gap-1.5">
-                    <Pencil className="w-4 h-4" strokeWidth={1.75} /> Edit Package
+                    <Pencil className="w-4 h-4" strokeWidth={1.75} /> Edit Demand
                   </button>
                   <button onClick={() => setSendId(pkg.id)} className="btn btn-primary gap-1.5">
                     <Send className="w-4 h-4" strokeWidth={1.75} /> Send Demand

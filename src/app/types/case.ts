@@ -30,6 +30,10 @@ export interface DemandPackage {
   version: string;
   notes?: string;
   isNew?: boolean;
+  // The Demand Letter is the source document — the only thing generated up
+  // front. A full multi-section package is assembled later, from this.
+  letterHtml?: string;
+  letterScrollTop?: number;
 }
 
 export interface PipelineState {

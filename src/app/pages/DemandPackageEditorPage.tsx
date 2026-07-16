@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  FileSignature, Sparkles, Upload, History, Download, Save, MoreVertical, Maximize2, Minimize2, X,
+  FileSignature, Sparkles, Upload, History, Download, Save, Maximize2, Minimize2, X, ArrowRight,
   Undo2, Redo2, Bold, Italic, Underline, Strikethrough, Superscript, Subscript,
   AlignLeft, AlignCenter, AlignRight, AlignJustify, IndentIncrease, IndentDecrease,
   List, ListOrdered, Quote, Link2, Image as ImageIcon, Table2, Minus, Palette, Highlighter, Type,
   ChevronDown, Plus, Trash2, FileText, Eye, RefreshCw, UploadCloud, GripVertical, Pencil, Search,
-  SlidersHorizontal, Clock, GitCompare, RotateCcw, Send, Bot, Wand2, Scissors, Copy, Gavel,
+  SlidersHorizontal, Clock, GitCompare, RotateCcw, Send, Bot, Wand2, Scissors, Copy,
+  Loader2, Circle, CheckCircle, Lightbulb, ShieldCheck,
 } from "lucide-react";
 import type { DemandPackage } from "../types/case";
 import { DAMAGE_EVIDENCE, DA_DAMAGE_FACTORS, VIOLATION_CARDS, type WorkspaceModel } from "../workspace/WorkspaceTabs";
@@ -47,24 +48,26 @@ const AI_CONTEXT: Record<EditorTabId, string> = {
   settlement: "Improve the closing language.",
 };
 
-const AI_PROMPTS = [
-  "Improve this paragraph",
-  "Rewrite professionally",
-  "Strengthen liability argument",
-  "Summarize selected text",
-  "Find supporting evidence",
-  "Insert applicable statute",
-  "Generate stronger demand language",
-  "Reduce repetitive wording",
-];
+// Quick-action suggestion chips, tailored to whichever section is active.
+const QUICK_ACTIONS: Record<EditorTabId, string[]> = {
+  letter: ["Improve Legal Tone", "Strengthen Liability", "Generate Stronger Demand", "Make More Professional"],
+  summary: ["Make More Professional", "Summarize", "Strengthen Liability"],
+  medical: ["Summarize", "Expand", "Improve Legal Tone"],
+  economic: ["Summarize", "Make More Professional"],
+  noneconomic: ["Strengthen Liability", "Summarize"],
+  negligence: ["Strengthen Liability", "Add Supporting Case Law", "Rewrite Paragraph"],
+  violations: ["Add Supporting Case Law", "Strengthen Liability"],
+  documents: ["Summarize", "Expand"],
+  settlement: ["Increase Negotiation Pressure", "Make More Professional", "Shorten Section"],
+};
 
-const SELECTION_ACTIONS = [
+// Inline actions shown in a floating toolbar next to a text selection.
+const INLINE_ACTIONS = [
+  { id: "improve", label: "Improve", icon: Sparkles },
   { id: "rewrite", label: "Rewrite", icon: Wand2 },
-  { id: "shorten", label: "Shorten", icon: Scissors },
-  { id: "expand", label: "Expand", icon: Plus },
-  { id: "formalize", label: "Formalize", icon: FileSignature },
-  { id: "persuasive", label: "Make Persuasive", icon: Sparkles },
-  { id: "statute", label: "Insert Statute", icon: Gavel },
+  { id: "explain", label: "Explain", icon: Lightbulb },
+  { id: "strengthen", label: "Strengthen", icon: ShieldCheck },
+  { id: "simplify", label: "Simplify", icon: Scissors },
 ] as const;
 
 const VERSIONS = [
@@ -73,6 +76,96 @@ const VERSIONS = [
   { id: "v3", label: "Partner Review", editor: "Michael Reyes, Partner", summary: "Strengthened the liability argument and added statutory citations." },
   { id: "v4", label: "Final Version", editor: "Sarah Chen, Esq.", summary: "Finalized settlement demand language and confirmed carrier contact details." },
 ];
+
+// ── Demand Letter sections — each independently editable, each with its own
+// inline "Edit with AI" workflow. Together they read as one continuous letter. ──
+const LETTER_SECTIONS_META = [
+  { id: "header", title: "Formal Header & Insurer Addressee" },
+  { id: "narrative", title: "Statement of Facts & Incident Narrative" },
+  { id: "liability", title: "Liability" },
+  { id: "medical", title: "Medical Treatment" },
+  { id: "economic", title: "Economic Damages" },
+  { id: "noneconomic", title: "Non-Economic Damages" },
+  { id: "settlement", title: "Settlement Demand" },
+] as const;
+type LetterSectionId = (typeof LETTER_SECTIONS_META)[number]["id"];
+
+const SECTION_QUICK_ACTIONS: Record<LetterSectionId, string[]> = {
+  header: ["Improve Legal Tone", "Correct Formatting", "Update Insurer Details", "Professional Tone"],
+  narrative: ["Strengthen Liability", "Improve Timeline", "Add Clinical Details", "Make More Persuasive"],
+  liability: ["Strengthen Liability", "Cite Supporting Evidence", "Make More Persuasive", "Improve Legal Tone"],
+  medical: ["Summarize Records", "Add Clinical Language", "Improve Medical Narrative"],
+  economic: ["Strengthen Economic Damages", "Add Supporting Evidence"],
+  noneconomic: ["Increase Pain & Suffering Argument", "Add Supporting Evidence"],
+  settlement: ["Increase Negotiation Pressure", "Strengthen Closing", "Cite Policy Limits", "More Assertive"],
+};
+
+const SECTION_GENERATION_STEPS = ["Analyzing section...", "Reviewing legal language...", "Applying attorney instructions...", "Generating revised draft..."];
+const CHANGE_CHECKLIST = ["Improved legal wording", "Enhanced structure", "Applied attorney instructions", "Preserved legal meaning"];
+
+function stripHtml(html: string) {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  return (div.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+// Deterministic, instruction-aware revision: appends one grounded sentence
+// rather than rewriting the section, so verified merge-field data (dollar
+// amounts) already inside the section is never disturbed.
+function generateSectionRevision(originalHtml: string, instruction: string) {
+  const lower = instruction.toLowerCase();
+  let addition = "This section has been refined to more directly support the demand.";
+  if (/insurer|update/.test(lower)) addition = "Insurer contact and policy details have been confirmed and updated.";
+  else if (/format/.test(lower)) addition = "Formatting and addressee details have been verified for accuracy.";
+  else if (/timeline/.test(lower)) addition = "The sequence of events has been clarified to present a clear chronological account.";
+  else if (/tone|professional/.test(lower)) addition = "This correspondence is submitted in the interest of a prompt and professional resolution of this claim.";
+  else if (/clinical|medical|summariz/.test(lower)) addition = "Treating providers have consistently documented these findings throughout the course of care.";
+  else if (/persuasive/.test(lower)) addition = "This conclusion is further corroborated by the verified evidence enclosed with this correspondence.";
+  else if (/pain|suffering/.test(lower)) addition = "The impact on daily function and quality of life has been significant and ongoing.";
+  else if (/policy/.test(lower)) addition = "This demand is made with full awareness of the applicable policy limits, which further supports prompt resolution.";
+  else if (/evidence/.test(lower)) addition = "This is fully supported by the enclosed documentation on file.";
+  else if (/liability|assertive|pressure|closing|strengthen/.test(lower)) addition = "The evidence on file leaves no reasonable basis for dispute on this point.";
+  return `${originalHtml}<p>${addition}</p>`;
+}
+
+// Word-level diff (simple LCS) so Preview Changes can highlight what the AI
+// actually added — plain-text only, since these sections are short paragraphs.
+function wordDiff(a: string, b: string) {
+  const aw = a.split(/(\s+)/).filter(Boolean);
+  const bw = b.split(/(\s+)/).filter(Boolean);
+  const m = aw.length, n = bw.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = aw[i - 1] === bw[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  const ops: { type: "same" | "added" | "removed"; text: string }[] = [];
+  let i = m, j = n;
+  while (i > 0 && j > 0) {
+    if (aw[i - 1] === bw[j - 1]) { ops.unshift({ type: "same", text: aw[i - 1] }); i--; j--; }
+    else if (dp[i - 1][j] >= dp[i][j - 1]) { ops.unshift({ type: "removed", text: aw[i - 1] }); i--; }
+    else { ops.unshift({ type: "added", text: bw[j - 1] }); j--; }
+  }
+  while (i > 0) { ops.unshift({ type: "removed", text: aw[i - 1] }); i--; }
+  while (j > 0) { ops.unshift({ type: "added", text: bw[j - 1] }); j--; }
+  return ops;
+}
+
+// Reassemble a single saved HTML blob from labeled section markers, or fall
+// back to the defaults (e.g. the very first time a letter is generated).
+const SECTION_MARKER = (id: string) => `<!--section:${id}-->`;
+function buildCombinedLetterHtml(sections: { id: string; html: string }[]) {
+  return sections.map((s) => `${SECTION_MARKER(s.id)}${s.html}`).join("");
+}
+function parseLetterSections(combined: string | undefined, defaults: { id: LetterSectionId; title: string; html: string }[]) {
+  if (!combined) return defaults;
+  const parts = combined.split(/<!--section:([a-z]+)-->/);
+  if (parts.length < 3) return defaults;
+  const map: Record<string, string> = {};
+  for (let i = 1; i < parts.length; i += 2) map[parts[i]] = parts[i + 1];
+  return defaults.map((d) => ({ ...d, html: map[d.id] ?? d.html }));
+}
 
 type DocCategory = "Medical Bills" | "Medical Records" | "Police Reports" | "Witness Statements" | "Expert Reports" | "Employment Records";
 const DOC_CATEGORIES: DocCategory[] = ["Medical Bills", "Medical Records", "Police Reports", "Witness Statements", "Expert Reports", "Employment Records"];
@@ -240,13 +333,14 @@ function RichTextToolbar() {
 // A contentEditable panel. Always mounted (hidden via CSS when inactive) so
 // content and native undo/redo history survive tab switches.
 function RichTextPanel({
-  active, initialHtml, onDirty, onSelect, panelRef,
+  active, initialHtml, onDirty, onSelect, panelRef, className = "",
 }: {
   active: boolean;
   initialHtml: string;
   onDirty: () => void;
   onSelect: (text: string, range: Range | null) => void;
   panelRef: React.RefObject<HTMLDivElement>;
+  className?: string;
 }) {
   const initialized = useRef(false);
   useEffect(() => {
@@ -270,8 +364,224 @@ function RichTextPanel({
       onInput={onDirty}
       onMouseUp={captureSelection}
       onKeyUp={captureSelection}
-      className={`${active ? "block" : "hidden"} min-h-[360px] px-6 py-5 text-sm text-ink leading-relaxed focus:outline-none [&_h1]:page-title [&_h1]:mb-2 [&_h2]:section-header [&_h2]:mb-2 [&_h3]:card-title [&_h3]:mb-1.5 [&_p]:mb-3 [&_blockquote]:border-l-2 [&_blockquote]:border-brand [&_blockquote]:pl-3 [&_blockquote]:text-deep [&_blockquote]:italic [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:text-deep [&_a]:underline`}
+      className={`${active ? "block" : "hidden"} min-h-[360px] px-6 py-5 text-sm text-ink leading-relaxed focus:outline-none [&_h1]:page-title [&_h1]:mb-2 [&_h2]:section-header [&_h2]:mb-2 [&_h3]:card-title [&_h3]:mb-1.5 [&_p]:mb-3 [&_blockquote]:border-l-2 [&_blockquote]:border-brand [&_blockquote]:pl-3 [&_blockquote]:text-deep [&_blockquote]:italic [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:text-deep [&_a]:underline ${className}`}
     />
+  );
+}
+
+// One Demand Letter section: its own editable text plus an inline,
+// section-scoped "Edit with AI" workflow (generate → review → preview → apply).
+// The right-hand AI Legal Assistant sidebar is untouched by any of this.
+function LetterSection({
+  meta, initialHtml, registerRef, onDirty, onSelect,
+}: {
+  meta: (typeof LETTER_SECTIONS_META)[number];
+  initialHtml: string;
+  registerRef: (id: LetterSectionId, el: HTMLDivElement | null) => void;
+  onDirty: () => void;
+  onSelect: (text: string, range: Range | null) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const initialized = useRef(false);
+  useEffect(() => {
+    if (!initialized.current && ref.current) {
+      ref.current.innerHTML = initialHtml;
+      initialized.current = true;
+    }
+    registerRef(meta.id, ref.current);
+    return () => registerRef(meta.id, null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [aiOpen, setAiOpen] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [phase, setPhase] = useState<"idle" | "generating" | "review" | "preview" | "applied">("idle");
+  const [instruction, setInstruction] = useState("");
+  const [genStep, setGenStep] = useState(0);
+  const [revised, setRevised] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (phase !== "generating") return;
+    if (genStep >= SECTION_GENERATION_STEPS.length) {
+      const t = setTimeout(() => {
+        setRevised(generateSectionRevision(ref.current?.innerHTML ?? initialHtml, instruction));
+        setPhase("review");
+      }, 350);
+      return () => clearTimeout(t);
+    }
+    const t = setTimeout(() => setGenStep((s) => s + 1), 480);
+    return () => clearTimeout(t);
+  }, [phase, genStep]);
+
+  const runGenerate = (prompt?: string) => {
+    const value = prompt ?? instruction;
+    if (!value.trim()) return;
+    setInstruction(value);
+    setGenStep(0);
+    setPhase("generating");
+  };
+  const discard = () => { setPhase("idle"); setRevised(null); setInstruction(""); };
+  const applyChanges = () => {
+    if (!revised || !ref.current) return;
+    ref.current.innerHTML = revised;
+    onDirty();
+    setPhase("applied");
+    setTimeout(() => {
+      setAiOpen(false);
+      setPhase("idle");
+      setRevised(null);
+      setInstruction("");
+    }, 1200);
+  };
+
+  const captureSelection = () => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !ref.current?.contains(sel.anchorNode)) return;
+    onSelect(sel.toString(), sel.getRangeAt(0).cloneRange());
+  };
+
+  const original = ref.current?.innerHTML ?? initialHtml;
+
+  return (
+    <div className={`pt-4 mt-4 border-t border-line first:border-t-0 first:pt-0 first:mt-0 rounded-lg transition-colors ${focused || aiOpen ? "bg-wash/60 -mx-3 px-3" : ""}`}>
+      <div className="flex items-center justify-between gap-3 mb-1.5 min-h-[24px]">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-[#8A98A3]">{meta.title}</span>
+        {(focused || aiOpen) && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="pill pill-neutral text-[10px]">Attorney Editing Focus</span>
+            <button
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setAiOpen((v) => !v)}
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${aiOpen ? "border-brand bg-tint text-deep" : "border-line text-deep hover:bg-tint"}`}
+            >
+              <Sparkles className="w-3.5 h-3.5" strokeWidth={1.75} /> Edit with AI
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div
+        ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={onDirty}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onMouseUp={captureSelection}
+        onKeyUp={captureSelection}
+        className="text-sm text-ink leading-relaxed focus:outline-none [&_p]:mb-3 last:[&_p]:mb-0"
+      />
+
+      {/* Inline AI editor — expands beneath the section, pushing content down */}
+      <div className={`grid transition-all duration-300 ease-out ${aiOpen ? "grid-rows-[1fr] opacity-100 mt-3" : "grid-rows-[0fr] opacity-0"}`}>
+        <div className="overflow-hidden">
+          <div className="rounded-xl border border-line bg-offwhite p-4">
+            {phase === "idle" && (
+              <>
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-deep" strokeWidth={1.75} />
+                  <div className="card-title text-[15px]">AI Section Editor</div>
+                </div>
+                <div className="secondary-text mt-1">Editing: <span className="font-semibold text-ink">{meta.title}</span></div>
+                <textarea
+                  value={instruction}
+                  onChange={(e) => setInstruction(e.target.value)}
+                  rows={2}
+                  placeholder="Describe how you'd like to improve this section..."
+                  className="w-full mt-3 px-3 py-2 rounded-lg border border-line bg-white text-sm text-ink focus:outline-none focus:border-brand transition-colors resize-none"
+                />
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {SECTION_QUICK_ACTIONS[meta.id].map((a) => (
+                    <button key={a} onClick={() => setInstruction(a)} className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${instruction === a ? "border-brand bg-tint text-deep" : "border-line bg-white text-ink hover:bg-tint"}`}>
+                      {a}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => runGenerate()}
+                  disabled={!instruction.trim()}
+                  className="btn btn-primary w-full justify-center gap-2 mt-3 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Generate Changes <ArrowRight className="w-4 h-4" strokeWidth={1.75} />
+                </button>
+              </>
+            )}
+
+            {phase === "generating" && (
+              <div className="py-1 space-y-2">
+                {SECTION_GENERATION_STEPS.map((label, i) => {
+                  const done = i < genStep, active = i === genStep;
+                  return (
+                    <div key={label} className={`flex items-center gap-2 text-sm transition-opacity duration-300 ${done || active ? "opacity-100" : "opacity-30"}`}>
+                      {done ? (
+                        <CheckCircle className="w-4 h-4 text-brand shrink-0" strokeWidth={1.75} />
+                      ) : active ? (
+                        <Loader2 className="w-4 h-4 text-brand shrink-0 animate-spin" strokeWidth={1.75} />
+                      ) : (
+                        <Circle className="w-4 h-4 text-[#CBD5DD] shrink-0" strokeWidth={1.75} />
+                      )}
+                      <span className={done || active ? "text-ink font-medium" : "text-[#8A98A3]"}>{label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {phase === "review" && revised && (
+              <>
+                <div className="card-title text-[15px]">Changes Ready</div>
+                <ul className="mt-2 space-y-1">
+                  {CHANGE_CHECKLIST.map((c) => (
+                    <li key={c} className="flex items-center gap-2 text-sm text-ink">
+                      <CheckCircle className="w-3.5 h-3.5 text-deep shrink-0" strokeWidth={1.75} /> {c}
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex items-center gap-2 mt-3">
+                  <button onClick={discard} className="btn btn-secondary flex-1 justify-center">Discard</button>
+                  <button onClick={() => setPhase("preview")} className="btn btn-secondary flex-1 justify-center">Preview Changes</button>
+                  <button onClick={applyChanges} className="btn btn-primary flex-1 justify-center">Apply Changes</button>
+                </div>
+              </>
+            )}
+
+            {phase === "preview" && revised && (
+              <>
+                <div className="card-title text-[15px] mb-2">Preview Changes</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <div className="eyebrow mb-1.5">Original Section</div>
+                    <div className="rounded-lg border border-line bg-white p-3 text-xs text-ink leading-relaxed max-h-56 overflow-y-auto">
+                      {wordDiff(stripHtml(original), stripHtml(revised)).filter((op) => op.type !== "added").map((op, i) => (
+                        <span key={i} className={op.type === "removed" ? "bg-red-100 text-red-700 line-through" : ""}>{op.text}</span>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="eyebrow mb-1.5">AI Revised Section</div>
+                    <div className="rounded-lg border border-brand bg-white p-3 text-xs text-ink leading-relaxed max-h-56 overflow-y-auto">
+                      {wordDiff(stripHtml(original), stripHtml(revised)).filter((op) => op.type !== "removed").map((op, i) => (
+                        <span key={i} className={op.type === "added" ? "bg-green-100 text-green-800 font-medium" : ""}>{op.text}</span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 mt-3">
+                  <button onClick={discard} className="btn btn-secondary flex-1 justify-center">Discard</button>
+                  <button onClick={applyChanges} className="btn btn-primary flex-1 justify-center">Apply Changes</button>
+                </div>
+              </>
+            )}
+
+            {phase === "applied" && (
+              <div className="flex items-center gap-2 text-sm text-deep font-semibold py-1">
+                <CheckCircle className="w-4 h-4 text-brand" strokeWidth={1.75} /> Section Updated
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -279,15 +589,25 @@ interface DemandPackageEditorPageProps {
   pkg: DemandPackage;
   model: WorkspaceModel;
   onClose: () => void;
-  onSaveNotes: (notes: string) => void;
+  // Drafting-stage mode: only the Demand Letter exists yet, so only that tab
+  // is shown. Saving hands the letter's HTML (and scroll position, so the
+  // attorney returns to where they left off) back to the caller.
+  letterOnly?: boolean;
+  initialLetterHtml?: string;
+  initialScrollTop?: number;
+  onSaveLetter?: (html: string, scrollTop: number) => void;
 }
 
-export function DemandPackageEditorPage({ pkg, model, onClose, onSaveNotes }: DemandPackageEditorPageProps) {
+const SAVE_STEPS = ["Saving Draft...", "Updating Demand...", "Creating Version {v}...", "Saved Successfully"];
+
+export function DemandPackageEditorPage({
+  pkg, model, onClose,
+  letterOnly = false, initialLetterHtml, initialScrollTop, onSaveLetter,
+}: DemandPackageEditorPageProps) {
   const [activeTab, setActiveTab] = useState<EditorTabId>("letter");
   const [fullScreen, setFullScreen] = useState(false);
-  const [overflowOpen, setOverflowOpen] = useState(false);
   const [versionOpen, setVersionOpen] = useState(false);
-  const [aiOpen, setAiOpen] = useState(false);
+  const [saveFlowStep, setSaveFlowStep] = useState<number | null>(null);
 
   // ── Autosave ──
   const [saveState, setSaveState] = useState<"saved" | "unsaved" | "saving">("saved");
@@ -304,6 +624,28 @@ export function DemandPackageEditorPage({ pkg, model, onClose, onSaveNotes }: De
     const t = setInterval(() => setSecondsAgo(Math.round((Date.now() - lastSavedAt) / 1000)), 1000);
     return () => clearInterval(t);
   }, [lastSavedAt]);
+
+  // ── Explicit "Save Changes" flow — a short sequence, then hands the saved
+  // letter back to the caller (who creates/updates the package record). ──
+  const nextVersionNumber = Math.floor(parseFloat(pkg.version || "0")) + 1;
+  useEffect(() => {
+    if (saveFlowStep === null) return;
+    if (saveFlowStep >= SAVE_STEPS.length) {
+      const t = setTimeout(() => {
+        setSaveFlowStep(null);
+        setSaveState("saved");
+        setLastSavedAt(Date.now());
+        const combinedLetterHtml = buildCombinedLetterHtml(
+          LETTER_SECTIONS_META.map((m) => ({ id: m.id, html: letterSectionRefs.current[m.id]?.innerHTML ?? "" }))
+        );
+        onSaveLetter?.(combinedLetterHtml, contentScrollRef.current?.scrollTop ?? 0);
+      }, 500);
+      return () => clearTimeout(t);
+    }
+    const t = setTimeout(() => setSaveFlowStep((s) => (s ?? 0) + 1), 450);
+    return () => clearTimeout(t);
+  }, [saveFlowStep]);
+  const runSaveFlow = () => setSaveFlowStep(0);
 
   // ── Structured content state ──
   const [executiveSummary, setExecutiveSummary] = useState({
@@ -352,20 +694,57 @@ export function DemandPackageEditorPage({ pkg, model, onClose, onSaveNotes }: De
   });
 
   // ── Rich text panel refs + initial HTML ──
-  const letterRef = useRef<HTMLDivElement>(null);
+  const letterSectionRefs = useRef<Partial<Record<LetterSectionId, HTMLDivElement | null>>>({});
+  const registerLetterSectionRef = (id: LetterSectionId, el: HTMLDivElement | null) => { letterSectionRefs.current[id] = el; };
+  const contentScrollRef = useRef<HTMLDivElement>(null);
+  // Restore exactly where the attorney left off when reopening a draft letter.
+  useEffect(() => {
+    if (initialScrollTop && contentScrollRef.current) contentScrollRef.current.scrollTop = initialScrollTop;
+  }, [initialScrollTop]);
   const medicalRef = useRef<HTMLDivElement>(null);
   const negligenceRef = useRef<HTMLDivElement>(null);
   const settlementClosingRef = useRef<HTMLDivElement>(null);
 
-  const letterHtml = useMemo(() => `
-    <p>To: ${settlement.recipient}, ${settlement.carrier}</p>
-    <p>Re: Settlement Demand — ${model.plaintiff} v. ${model.defendant} · Incident Date: ${model.incidentDate}</p>
-    <p>Dear Claims Representative,</p>
-    <p>This firm represents ${model.plaintiff} in connection with injuries sustained on ${model.incidentDate} in ${model.jurisdiction}. Liability rests squarely with your insured, whose commercial vehicle failed to yield the right-of-way and entered the intersection in violation of Illinois traffic statutes. As a result, ${model.plaintiff} sustained a two-level cervical herniation requiring ongoing medical treatment.</p>
-    <p>Verified economic damages of <span data-field="economicTotal">${formatUSD(liveEconomicTotal)}</span> — comprising medical bills, lost wages, future medical care, and rehabilitation — are fully documented in the enclosed records. Given the severity and permanence of the injuries, non-economic damages are valued at <span data-field="nonEconomicTotal">${formatUSD(liveNonEconomicTotal)}</span>.</p>
-    <p>We demand payment of <span data-field="settlementTotal">${formatUSD(liveSettlementTotal)}</span> in full settlement of this claim within ${settlement.deadline}. We trust ${settlement.carrier} will give this matter prompt attention.</p>
-    <p>Sincerely,<br/>Counsel for ${model.plaintiff}</p>
-  `, []); // seeded once; live totals sync via the effect below
+  // The letter is stored as one blob (marker-delimited) but edited as 7
+  // independent sections. Split once on mount; each section owns its DOM.
+  const letterSections = useMemo(() => parseLetterSections(initialLetterHtml, [
+    {
+      id: "header" as const, title: "Formal Header & Insurer Addressee", html: `
+      <p style="text-align:right;margin-bottom:28px;">${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</p>
+      <p style="margin-bottom:2px;">Claims Department</p>
+      <p style="margin-bottom:2px;">${settlement.carrier}</p>
+      <p style="margin-bottom:24px;">Via Certified Mail &amp; Email</p>
+      <p style="font-weight:600;margin-bottom:24px;">Re:&nbsp; Settlement Demand — ${model.plaintiff} v. ${model.defendant}<br/>Date of Loss: ${model.incidentDate}&nbsp;&nbsp;|&nbsp;&nbsp;Claimant: ${model.plaintiff}</p>
+      <p>Dear Claims Representative:</p>
+    `},
+    {
+      id: "narrative" as const, title: "Statement of Facts & Incident Narrative", html: `
+      <p>This firm represents ${model.plaintiff} in connection with a collision that occurred on ${model.incidentDate} in ${model.jurisdiction}. ${model.defendant}'s commercial vehicle failed to yield the right-of-way and entered the intersection in violation of applicable traffic statutes, striking the vehicle occupied by ${model.plaintiff}.</p>
+    `},
+    {
+      id: "liability" as const, title: "Liability", html: `
+      <p>Liability rests squarely with your insured. The responding officer's report, scene reconstruction, and corroborating witness statements establish that ${model.defendant} entered the intersection against ${model.plaintiff}'s right-of-way. No credible comparative-fault argument is available on these facts.</p>
+    `},
+    {
+      id: "medical" as const, title: "Medical Treatment", html: `
+      <p>As a direct result of this collision, ${model.plaintiff} sustained a two-level cervical herniation requiring ongoing medical treatment, including emergency evaluation, diagnostic imaging, and a supervised course of physical therapy. Treating physicians have documented persistent pain and functional limitation consistent with the imaging findings.</p>
+    `},
+    {
+      id: "economic" as const, title: "Economic Damages", html: `
+      <p>Verified economic damages total <span data-field="economicTotal">${formatUSD(liveEconomicTotal)}</span>, comprising medical bills, lost wages, future medical care, and rehabilitation — all fully documented in the enclosed records.</p>
+    `},
+    {
+      id: "noneconomic" as const, title: "Non-Economic Damages", html: `
+      <p>Given the severity and permanence of the injuries, non-economic damages are valued at <span data-field="nonEconomicTotal">${formatUSD(liveNonEconomicTotal)}</span>, reflecting the pain, suffering, and diminished quality of life ${model.plaintiff} has experienced and will continue to experience.</p>
+    `},
+    {
+      id: "settlement" as const, title: "Settlement Demand", html: `
+      <p>We demand payment of <span data-field="settlementTotal">${formatUSD(liveSettlementTotal)}</span> in full settlement of this claim within ${settlement.deadline}. We trust ${settlement.carrier} will give this matter prompt attention.</p>
+      <p style="margin-top:8px;">Sincerely,</p>
+      <p style="margin-top:48px;margin-bottom:2px;">Sarah Chen, Esq.</p>
+      <p style="margin-bottom:2px;">Counsel for ${model.plaintiff}</p>
+    `},
+  ]), []); // seeded once (split from a saved draft when re-opening); live totals sync via the effect below
 
   const medicalHtml = useMemo(() => `
     <h3>Medical Timeline &amp; Current Condition</h3>
@@ -383,46 +762,119 @@ export function DemandPackageEditorPage({ pkg, model, onClose, onSaveNotes }: De
     <p>We are prepared to proceed to litigation should a satisfactory resolution not be reached within the deadline stated above. We remain available to discuss this demand in good faith and look forward to a prompt response.</p>
   `, []);
 
-  // Keep merge-field spans in the Demand Letter in sync with live totals.
+  // Keep merge-field spans in the Demand Letter in sync with live totals —
+  // across whichever section each field actually lives in.
   useEffect(() => {
-    const root = letterRef.current;
-    if (!root) return;
-    const set = (field: string, value: string) => root.querySelectorAll(`[data-field="${field}"]`).forEach((el) => { el.textContent = value; });
+    const set = (field: string, value: string) => {
+      Object.values(letterSectionRefs.current).forEach((root) => {
+        root?.querySelectorAll(`[data-field="${field}"]`).forEach((el) => { el.textContent = value; });
+      });
+    };
     set("economicTotal", formatUSD(liveEconomicTotal));
     set("nonEconomicTotal", formatUSD(liveNonEconomicTotal));
     set("settlementTotal", formatUSD(liveSettlementTotal));
   }, [liveEconomicTotal, liveNonEconomicTotal, liveSettlementTotal]);
 
-  // ── AI assistant ──
-  const [aiMessages, setAiMessages] = useState<{ from: "ai" | "user"; text: string }[]>([
-    { from: "ai", text: "I'm reviewing this demand package with you. Ask me to rewrite a section, find supporting evidence, or strengthen the liability argument." },
+  // ── AI assistant — permanent sidebar, always understands the active section ──
+  type ChatMsg = { id: string; from: "ai" | "user"; text: string; streaming?: boolean };
+  const [aiMessages, setAiMessages] = useState<ChatMsg[]>([
+    { id: "seed", from: "ai", text: "I'm reviewing this demand package with you. Ask me to rewrite a section, find supporting evidence, or strengthen the liability argument." },
   ]);
   const [aiInput, setAiInput] = useState("");
+  const [aiThinking, setAiThinking] = useState(false);
   const [selection, setSelection] = useState<{ text: string; range: Range | null }>({ text: "", range: null });
   const [aiResult, setAiResult] = useState<{ prompt: string; text: string } | null>(null);
+  const [inlineToolbar, setInlineToolbar] = useState<{ x: number; y: number } | null>(null);
+
+  // Shared by every rich-text panel: captures the selection for the AI
+  // sidebar and positions the inline floating action toolbar above it.
+  const handleTextSelect = (text: string, range: Range | null) => {
+    setSelection({ text, range });
+    if (text && range) {
+      const rect = range.getBoundingClientRect();
+      setInlineToolbar({ x: rect.left + rect.width / 2, y: rect.top });
+    } else {
+      setInlineToolbar(null);
+    }
+  };
+
+  // Dismiss the inline toolbar on scroll or on any click outside it.
+  useEffect(() => {
+    const dismiss = () => setInlineToolbar(null);
+    window.addEventListener("scroll", dismiss, true);
+    return () => window.removeEventListener("scroll", dismiss, true);
+  }, []);
+
+  // Progressively reveal the AI's reply, like a live-typed response.
+  const streamAiResponse = (fullText: string) => {
+    const id = uid();
+    setAiMessages((prev) => [...prev, { id, from: "ai", text: "", streaming: true }]);
+    const chunk = Math.max(3, Math.round(fullText.length / 35));
+    let i = 0;
+    const tick = () => {
+      i = Math.min(fullText.length, i + chunk);
+      setAiMessages((prev) => prev.map((m) => (m.id === id ? { ...m, text: fullText.slice(0, i) } : m)));
+      if (i < fullText.length) setTimeout(tick, 20);
+      else setAiMessages((prev) => prev.map((m) => (m.id === id ? { ...m, streaming: false } : m)));
+    };
+    tick();
+  };
+
+  // Context-aware reply — grounded in the current section, damages, defendant,
+  // policy limits, medical evidence, settlement amount, and case documents.
+  const buildAiResponse = (prompt: string) => {
+    switch (activeTab) {
+      case "letter":
+        return `Looking at the Demand Letter: it currently seeks ${formatUSD(liveSettlementTotal)} from ${settlement.carrier} on behalf of ${model.plaintiff}, citing ${model.defendant}'s liability. I can strengthen the liability paragraph, tighten the tone, or make the closing more assertive — just tell me which.`;
+      case "summary":
+        return `The Executive Summary lists ${model.plaintiff} v. ${model.defendant} with a demand of ${executiveSummary.demandAmount}. I can make the liability line read more persuasively or sharpen the settlement-strategy framing.`;
+      case "medical":
+        return `The Medical Summary should tie the treatment record directly to the injuries claimed. I can tighten the timeline, or expand on the permanence of the injuries for more weight.`;
+      case "economic":
+        return `Economic damages total ${formatUSD(liveEconomicTotal)} across ${economicCategories.length} verified categories, led by ${economicCategories[0]?.category}. I can explain how a category was calculated or flag one that needs stronger documentation.`;
+      case "noneconomic":
+        return `Non-economic damages are valued at ${formatUSD(liveNonEconomicTotal)} using a ${liveMultiplierSum.toFixed(2)}× multiplier. I can reinforce the reasoning behind the highest-weighted factors.`;
+      case "negligence":
+        return `The negligence argument ties ${model.defendant}'s breach directly to ${model.plaintiff}'s injuries. I can strengthen the causation language or add supporting case law.`;
+      case "violations":
+        return `Based on the case facts on file, I can recommend additional statutes or federal regulations that reinforce the violation analysis.`;
+      case "documents":
+        return `You have ${documents.length} supporting documents on file across all categories. I can help spot gaps in the medical, police, or expert evidence.`;
+      case "settlement":
+        return `The Settlement Demand asks for ${settlement.amount} from ${settlement.carrier}, with a ${settlement.deadline} deadline. I can add urgency to the closing statement or firm up the tone.`;
+      default:
+        return `I can help rewrite, strengthen, or shorten this section — just tell me what you'd like.`;
+    }
+  };
 
   const sendAiMessage = (text: string) => {
     if (!text.trim()) return;
-    setAiMessages((prev) => [...prev, { from: "user", text }]);
-    const response = `${AI_CONTEXT[activeTab]} Based on the current ${EDITOR_TABS.find((t) => t.id === activeTab)?.label} section, here's my take: this reads clearly and is well-supported by the record. I'd tighten the second sentence and lead with the strongest liability fact.`;
-    setTimeout(() => setAiMessages((prev) => [...prev, { from: "ai", text: response }]), 500);
+    setAiMessages((prev) => [...prev, { id: uid(), from: "user", text }]);
     setAiInput("");
+    setAiThinking(true);
+    setTimeout(() => {
+      setAiThinking(false);
+      streamAiResponse(buildAiResponse(text));
+    }, 650);
   };
 
+  // Triggered from the inline floating toolbar next to a text selection.
   const runSelectionAction = (actionId: string, label: string) => {
-    if (!selection.text) {
-      setAiMessages((prev) => [...prev, { from: "ai", text: "Select some text in the document first, then choose an action and I'll work on that passage." }]);
-      return;
-    }
+    if (!selection.text) return;
     let result = selection.text;
-    if (actionId === "rewrite") result = `${selection.text.replace(/\.$/, "")}, reframed for maximum clarity and impact.`;
-    else if (actionId === "shorten") result = selection.text.split(" ").slice(0, Math.max(6, Math.round(selection.text.split(" ").length * 0.6))).join(" ") + ".";
-    else if (actionId === "expand") result = `${selection.text} This is further corroborated by the verified medical records and scene evidence on file, which independently support the same conclusion.`;
-    else if (actionId === "formalize") result = `It is respectfully submitted that ${selection.text.charAt(0).toLowerCase()}${selection.text.slice(1)}`;
-    else if (actionId === "persuasive") result = `${selection.text} The evidence here is unequivocal and leaves no reasonable basis for dispute.`;
-    else if (actionId === "statute") result = `${selection.text} (see ${VIOLATION_CARDS[0]?.statute}).`;
-    setAiResult({ prompt: label, text: result });
-    setAiMessages((prev) => [...prev, { from: "user", text: `${label}: "${selection.text.slice(0, 60)}${selection.text.length > 60 ? "…" : ""}"` }, { from: "ai", text: result }]);
+    if (actionId === "improve") result = `${selection.text.replace(/\.$/, "")} — refined for clarity and stronger legal phrasing.`;
+    else if (actionId === "rewrite") result = `${selection.text.replace(/\.$/, "")}, reframed for maximum clarity and impact.`;
+    else if (actionId === "explain") result = `This passage matters because it directly ties ${model.defendant}'s conduct to the damages claimed, reinforcing the causation element of the case.`;
+    else if (actionId === "strengthen") result = `${selection.text} The evidence here is unequivocal and leaves no reasonable basis for dispute.`;
+    else if (actionId === "simplify") result = selection.text.split(" ").slice(0, Math.max(6, Math.round(selection.text.split(" ").length * 0.6))).join(" ") + ".";
+    setAiMessages((prev) => [...prev, { id: uid(), from: "user", text: `${label}: "${selection.text.slice(0, 60)}${selection.text.length > 60 ? "…" : ""}"` }]);
+    setInlineToolbar(null);
+    setAiThinking(true);
+    setTimeout(() => {
+      setAiThinking(false);
+      streamAiResponse(result);
+      setAiResult({ prompt: label, text: result });
+    }, 650);
   };
 
   const replaceSelection = () => {
@@ -453,8 +905,9 @@ export function DemandPackageEditorPage({ pkg, model, onClose, onSaveNotes }: De
   const [restoredBanner, setRestoredBanner] = useState<string | null>(null);
   const restoreVersion = (id: string) => {
     const v = VERSIONS.find((x) => x.id === id);
-    if (!v || !letterRef.current) return;
-    letterRef.current.innerHTML = `<p><em>[Restored from "${v.label}" — ${v.summary}]</em></p>` + letterRef.current.innerHTML;
+    const headerEl = letterSectionRefs.current.header;
+    if (!v || !headerEl) return;
+    headerEl.innerHTML = `<p><em>[Restored from "${v.label}" — ${v.summary}]</em></p>` + headerEl.innerHTML;
     markDirty();
     setRestoreConfirmId(null);
     setVersionOpen(false);
@@ -512,9 +965,9 @@ export function DemandPackageEditorPage({ pkg, model, onClose, onSaveNotes }: De
   };
 
   return (
-    <div className="fixed inset-0 z-[95] bg-ink/50 flex items-center justify-center p-6" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className={`fixed inset-0 z-[95] bg-ink/50 flex items-center justify-center transition-all duration-200 ${fullScreen ? "p-0" : "p-6"}`} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div
-        className={`relative bg-white flex flex-col overflow-hidden shadow-2xl border border-line transition-all duration-200 ${fullScreen ? "w-full h-full rounded-none" : "w-full max-w-[1280px] h-[88vh] rounded-2xl"}`}
+        className={`relative bg-white flex flex-col overflow-hidden shadow-2xl border border-line transition-all duration-200 ${fullScreen ? "w-screen h-screen rounded-none border-0" : "w-full max-w-[1280px] h-[88vh] rounded-2xl"}`}
         onMouseDown={(e) => e.stopPropagation()}
       >
           {/* ── Header ── */}
@@ -546,21 +999,9 @@ export function DemandPackageEditorPage({ pkg, model, onClose, onSaveNotes }: De
               <button onClick={() => window.print()} className="btn btn-secondary gap-1.5">
                 <Download className="w-4 h-4" strokeWidth={1.75} /> Download PDF
               </button>
-              <button onClick={() => { setSaveState("saving"); setTimeout(() => { setSaveState("saved"); setLastSavedAt(Date.now()); }, 500); }} className="btn btn-primary gap-1.5">
-                <Save className="w-4 h-4" strokeWidth={1.75} /> Save
+              <button onClick={onSaveLetter ? runSaveFlow : () => { setSaveState("saving"); setTimeout(() => { setSaveState("saved"); setLastSavedAt(Date.now()); }, 500); }} className="btn btn-primary gap-1.5">
+                <Save className="w-4 h-4" strokeWidth={1.75} /> Save Changes
               </button>
-              <div className="relative">
-                <button onClick={() => setOverflowOpen((v) => !v)} className="p-2 rounded-lg border border-line text-ink hover:bg-wash transition-colors">
-                  <MoreVertical className="w-4 h-4" strokeWidth={1.75} />
-                </button>
-                {overflowOpen && (
-                  <div className="absolute top-full right-0 mt-1 w-48 lg-card p-1.5 z-20">
-                    <button onClick={() => { onSaveNotes(`Duplicated as reference on ${new Date().toLocaleDateString()}`); setOverflowOpen(false); }} className="w-full text-left px-2.5 py-2 rounded-md text-sm text-ink hover:bg-tint transition-colors">Duplicate Package</button>
-                    <button onClick={() => { setOverflowOpen(false); window.print(); }} className="w-full text-left px-2.5 py-2 rounded-md text-sm text-ink hover:bg-tint transition-colors">Export as Document</button>
-                    <button onClick={() => setOverflowOpen(false)} className="w-full text-left px-2.5 py-2 rounded-md text-sm text-[#DC2626] hover:bg-tint transition-colors">Delete Package</button>
-                  </div>
-                )}
-              </div>
               <button onClick={() => setFullScreen((v) => !v)} className="p-2 rounded-lg border border-line text-ink hover:bg-wash transition-colors" title={fullScreen ? "Exit Full Screen" : "Expand / Full Screen"}>
                 {fullScreen ? <Minimize2 className="w-4 h-4" strokeWidth={1.75} /> : <Maximize2 className="w-4 h-4" strokeWidth={1.75} />}
               </button>
@@ -580,25 +1021,49 @@ export function DemandPackageEditorPage({ pkg, model, onClose, onSaveNotes }: De
           <RichTextToolbar />
 
           {/* ── Package navigation tabs ── */}
-          <div className="flex items-center gap-1 px-3 border-b border-line overflow-x-auto bg-offwhite">
-            {EDITOR_TABS.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => setActiveTab(t.id)}
-                className={`relative px-3.5 py-3 text-xs font-semibold whitespace-nowrap transition-colors ${activeTab === t.id ? "text-brand" : "text-[#5B6B78] hover:text-ink"}`}
-              >
-                {t.label}
-                {activeTab === t.id && <span className="absolute left-2 right-2 -bottom-px h-0.5 rounded-full bg-brand" />}
-              </button>
-            ))}
-          </div>
+          {!letterOnly && (
+            <div className="flex items-center gap-1 px-3 border-b border-line overflow-x-auto bg-offwhite">
+              {EDITOR_TABS.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setActiveTab(t.id)}
+                  className={`relative px-3.5 py-3 text-xs font-semibold whitespace-nowrap transition-colors ${activeTab === t.id ? "text-brand" : "text-[#5B6B78] hover:text-ink"}`}
+                >
+                  {t.label}
+                  {activeTab === t.id && <span className="absolute left-2 right-2 -bottom-px h-0.5 rounded-full bg-brand" />}
+                </button>
+              ))}
+            </div>
+          )}
+          {letterOnly && (
+            <div className="px-6 py-3 border-b border-line bg-offwhite">
+              <span className="eyebrow text-deep">Demand Letter</span>
+              <span className="secondary-text ml-2">Only the demand letter is drafted at this stage — the full package is assembled later.</span>
+            </div>
+          )}
 
-          {/* ── Tab content ── */}
-          <div className="flex-1 overflow-y-auto">
+          {/* ── Body: document (75%) + permanent AI sidebar (25%) ── */}
+          <div className="flex-1 flex overflow-hidden">
+          <div ref={contentScrollRef} className="flex-[65] overflow-y-auto">
             {/* Rich-text tabs stay mounted (hidden via CSS) so state survives tab switches */}
-            <RichTextPanel active={activeTab === "letter"} initialHtml={letterHtml} onDirty={markDirty} onSelect={(text, range) => setSelection({ text, range })} panelRef={letterRef} />
-            <RichTextPanel active={activeTab === "medical"} initialHtml={medicalHtml} onDirty={markDirty} onSelect={(text, range) => setSelection({ text, range })} panelRef={medicalRef} />
-            <RichTextPanel active={activeTab === "negligence"} initialHtml={negligenceHtml} onDirty={markDirty} onSelect={(text, range) => setSelection({ text, range })} panelRef={negligenceRef} />
+            <div className={activeTab === "letter" ? "flex justify-center bg-wash py-8 px-4" : "hidden"}>
+              <div className="w-full max-w-[760px] bg-white shadow-md border border-line font-serif px-14 py-14">
+                {letterSections.map((s) => (
+                  <LetterSection
+                    key={s.id}
+                    meta={s}
+                    initialHtml={s.html}
+                    registerRef={registerLetterSectionRef}
+                    onDirty={markDirty}
+                    onSelect={handleTextSelect}
+                  />
+                ))}
+              </div>
+            </div>
+            {!letterOnly && (
+              <>
+            <RichTextPanel active={activeTab === "medical"} initialHtml={medicalHtml} onDirty={markDirty} onSelect={handleTextSelect} panelRef={medicalRef} />
+            <RichTextPanel active={activeTab === "negligence"} initialHtml={negligenceHtml} onDirty={markDirty} onSelect={handleTextSelect} panelRef={negligenceRef} />
 
             {activeTab === "summary" && (
               <div className="p-6 space-y-4 max-w-2xl">
@@ -887,11 +1352,91 @@ export function DemandPackageEditorPage({ pkg, model, onClose, onSaveNotes }: De
                 <div>
                   <div className="eyebrow mb-1.5">Closing Statement</div>
                   <div className="rounded-lg border border-line">
-                    <RichTextPanel active initialHtml={settlementClosingHtml} onDirty={markDirty} onSelect={(text, range) => setSelection({ text, range })} panelRef={settlementClosingRef} />
+                    <RichTextPanel active initialHtml={settlementClosingHtml} onDirty={markDirty} onSelect={handleTextSelect} panelRef={settlementClosingRef} />
                   </div>
                 </div>
               </div>
             )}
+              </>
+            )}
+          </div>
+
+          {/* ── Permanent AI sidebar — 25% ── */}
+          <div className="flex-[35] min-w-[320px] max-w-[480px] border-l border-line flex flex-col bg-white shrink-0">
+            <div className="flex items-center justify-between gap-2 px-4 py-3.5 border-b border-line shrink-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-tint flex items-center justify-center shrink-0">
+                  <Bot className="w-4 h-4 text-deep" strokeWidth={1.75} />
+                </div>
+                <div className="card-title text-sm truncate">AI Legal Assistant</div>
+              </div>
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-[#15803D] shrink-0">
+                <span className="relative flex w-1.5 h-1.5">
+                  <span className="absolute inline-flex w-full h-full rounded-full bg-[#22C55E] opacity-75 animate-ping" />
+                  <span className="relative inline-flex w-1.5 h-1.5 rounded-full bg-[#22C55E]" />
+                </span>
+                Active
+              </span>
+            </div>
+
+            <div className="px-4 py-2.5 border-b border-line bg-offwhite shrink-0">
+              <div className="eyebrow">Editing</div>
+              <div className="text-sm font-semibold text-ink mt-0.5">{EDITOR_TABS.find((t) => t.id === activeTab)?.label}</div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-2.5">
+              {aiMessages.map((m) => (
+                <div key={m.id} className={`flex ${m.from === "user" ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-[88%] rounded-xl px-3 py-2 text-xs leading-relaxed ${m.from === "user" ? "bg-brand text-white" : "bg-tint text-ink"}`}>
+                    {m.text}
+                    {m.streaming && <span className="inline-block w-1 h-3 bg-deep ml-0.5 align-middle animate-pulse" />}
+                  </div>
+                </div>
+              ))}
+
+              {aiThinking && (
+                <div className="flex justify-start">
+                  <div className="rounded-xl px-3 py-2.5 bg-tint flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-deep/50 animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-deep/50 animate-bounce" style={{ animationDelay: "120ms" }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-deep/50 animate-bounce" style={{ animationDelay: "240ms" }} />
+                  </div>
+                </div>
+              )}
+
+              {aiResult && (
+                <div className="rounded-xl border border-brand bg-tint p-3">
+                  <div className="eyebrow mb-1">AI Result — {aiResult.prompt}</div>
+                  <p className="text-xs text-ink leading-relaxed">{aiResult.text}</p>
+                  <div className="flex items-center gap-1 mt-2 flex-wrap">
+                    <button onClick={replaceSelection} className="btn btn-primary text-[11px] px-2 py-1 gap-1"><RefreshCw className="w-3 h-3" strokeWidth={1.75} /> Replace</button>
+                    <button onClick={insertBelow} className="btn btn-secondary text-[11px] px-2 py-1 gap-1"><Plus className="w-3 h-3" strokeWidth={1.75} /> Insert Below</button>
+                    <button onClick={copyResult} className="btn btn-secondary text-[11px] px-2 py-1 gap-1"><Copy className="w-3 h-3" strokeWidth={1.75} /> Copy</button>
+                    <button onClick={() => setAiResult(null)} className="text-[11px] font-medium text-[#8A98A3] hover:text-ink px-1">Dismiss</button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="px-4 py-3 border-t border-line shrink-0">
+              <div className="eyebrow mb-1.5">Quick Actions</div>
+              <div className="flex flex-wrap gap-1.5">
+                {QUICK_ACTIONS[activeTab].map((p) => (
+                  <button key={p} onClick={() => sendAiMessage(p)} className="px-2.5 py-1.5 rounded-lg border border-line text-xs font-medium text-ink hover:bg-tint transition-colors">{p}</button>
+                ))}
+              </div>
+            </div>
+
+            <div className="border-t border-line p-3 flex items-center gap-1.5 shrink-0">
+              <input
+                value={aiInput} onChange={(e) => setAiInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") sendAiMessage(aiInput); }}
+                placeholder="Ask AI to improve this section..."
+                className="flex-1 px-3 py-2 rounded-lg border border-line text-xs text-ink focus:outline-none focus:border-brand transition-colors"
+              />
+              <button onClick={() => sendAiMessage(aiInput)} className="btn btn-primary px-2.5 py-2"><Send className="w-3.5 h-3.5" strokeWidth={1.75} /></button>
+            </div>
+          </div>
           </div>
 
       {/* ── Version History drawer ── */}
@@ -961,79 +1506,53 @@ export function DemandPackageEditorPage({ pkg, model, onClose, onSaveNotes }: De
         </div>
       )}
 
-      {/* ── Floating AI Legal Assistant ── */}
-      {!aiOpen && (
-        <button
-          onClick={() => setAiOpen(true)}
-          className="absolute bottom-6 right-6 z-20 inline-flex items-center gap-2 pl-3.5 pr-4 py-2.5 rounded-full bg-ink text-white shadow-lg hover:bg-deep transition-colors"
+      {/* ── Inline floating action toolbar — appears next to a text selection ── */}
+      {inlineToolbar && selection.text && (
+        <div
+          className="fixed z-[96] -translate-x-1/2 -translate-y-full flex items-center gap-0.5 rounded-lg border border-line bg-ink shadow-2xl p-1"
+          style={{ left: inlineToolbar.x, top: inlineToolbar.y - 8 }}
+          onMouseDown={(e) => e.preventDefault()}
         >
-          <Sparkles className="w-4 h-4 text-brand" strokeWidth={1.75} /> AI Legal Assistant
-        </button>
+          {INLINE_ACTIONS.map((a) => (
+            <button
+              key={a.id}
+              onClick={() => runSelectionAction(a.id, a.label)}
+              title={a.label}
+              className="inline-flex items-center gap-1 px-2 py-1.5 rounded-md text-white text-xs font-medium hover:bg-white/10 transition-colors"
+            >
+              <a.icon className="w-3.5 h-3.5" strokeWidth={1.75} /> {a.label}
+            </button>
+          ))}
+        </div>
       )}
 
-      {aiOpen && (
-        <div className="absolute top-0 right-0 h-full w-[400px] max-w-[92%] bg-white shadow-xl z-30 flex flex-col border-l border-line">
-          <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-line">
-            <div className="flex items-center gap-2">
-              <Bot className="w-5 h-5 text-deep" strokeWidth={1.75} />
-              <div>
-                <div className="card-title text-[15px]">AI Legal Assistant</div>
-                <div className="secondary-text">{AI_CONTEXT[activeTab]}</div>
-              </div>
+      {/* ── Save Changes flow — sequential steps, then hands off to the caller ── */}
+      {saveFlowStep !== null && (
+        <div className="absolute inset-0 z-40 bg-white/95 flex items-center justify-center">
+          <div className="w-full max-w-xs text-center">
+            <div className="w-12 h-12 rounded-2xl bg-tint flex items-center justify-center mx-auto mb-5">
+              <Save className="w-5 h-5 text-deep" strokeWidth={1.75} />
             </div>
-            <button onClick={() => setAiOpen(false)} className="p-1.5 hover:bg-tint rounded-lg transition-colors"><X className="w-5 h-5 text-[#5B6B78]" strokeWidth={1.75} /></button>
-          </div>
-
-          <div className="px-5 py-3 border-b border-line">
-            <div className="eyebrow mb-2">Selected Text Actions</div>
-            <div className="flex flex-wrap gap-1.5">
-              {SELECTION_ACTIONS.map((a) => (
-                <button key={a.id} onClick={() => runSelectionAction(a.id, a.label)} className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-line text-xs font-medium text-ink hover:bg-tint transition-colors">
-                  <a.icon className="w-3.5 h-3.5" strokeWidth={1.75} /> {a.label}
-                </button>
-              ))}
+            <div className="space-y-2.5 text-left">
+              {SAVE_STEPS.map((label, i) => {
+                const text = label.replace("{v}", String(nextVersionNumber));
+                const done = i < saveFlowStep;
+                const active = i === saveFlowStep;
+                const isLast = i === SAVE_STEPS.length - 1;
+                return (
+                  <div key={label} className={`flex items-center gap-2.5 text-sm transition-opacity duration-300 ${done || active ? "opacity-100" : "opacity-30"}`}>
+                    {done || (active && isLast) ? (
+                      <CheckCircle className="w-4 h-4 text-brand shrink-0" strokeWidth={1.75} />
+                    ) : active ? (
+                      <Loader2 className="w-4 h-4 text-brand shrink-0 animate-spin" strokeWidth={1.75} />
+                    ) : (
+                      <Circle className="w-4 h-4 text-[#CBD5DD] shrink-0" strokeWidth={1.75} />
+                    )}
+                    <span className={done || active ? "text-ink font-medium" : "text-[#8A98A3]"}>{text}</span>
+                  </div>
+                );
+              })}
             </div>
-            {selection.text && <p className="text-xs text-[#8A98A3] mt-2 truncate">Selected: "{selection.text}"</p>}
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-5 space-y-3">
-            {aiMessages.map((m, i) => (
-              <div key={i} className={`flex ${m.from === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[85%] rounded-xl px-3.5 py-2.5 text-sm leading-relaxed ${m.from === "user" ? "bg-brand text-white" : "bg-tint text-ink"}`}>{m.text}</div>
-              </div>
-            ))}
-
-            {aiResult && (
-              <div className="rounded-xl border border-brand bg-tint p-3.5">
-                <div className="eyebrow mb-1.5">AI Result — {aiResult.prompt}</div>
-                <p className="text-sm text-ink leading-relaxed">{aiResult.text}</p>
-                <div className="flex items-center gap-1.5 mt-3 flex-wrap">
-                  <button onClick={() => setAiResult(aiResult)} className="btn btn-secondary text-xs px-2.5 py-1.5 gap-1"><Eye className="w-3.5 h-3.5" strokeWidth={1.75} /> Preview</button>
-                  <button onClick={replaceSelection} className="btn btn-primary text-xs px-2.5 py-1.5 gap-1"><RefreshCw className="w-3.5 h-3.5" strokeWidth={1.75} /> Replace</button>
-                  <button onClick={insertBelow} className="btn btn-secondary text-xs px-2.5 py-1.5 gap-1"><Plus className="w-3.5 h-3.5" strokeWidth={1.75} /> Insert Below</button>
-                  <button onClick={copyResult} className="btn btn-secondary text-xs px-2.5 py-1.5 gap-1"><Copy className="w-3.5 h-3.5" strokeWidth={1.75} /> Copy</button>
-                </div>
-              </div>
-            )}
-
-            <div className="pt-1">
-              <div className="eyebrow mb-2">Suggested Prompts</div>
-              <div className="flex flex-wrap gap-1.5">
-                {AI_PROMPTS.map((p) => (
-                  <button key={p} onClick={() => sendAiMessage(p)} className="px-2.5 py-1.5 rounded-lg border border-line text-xs font-medium text-ink hover:bg-tint transition-colors">{p}</button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="border-t border-line p-4 flex items-center gap-2">
-            <input
-              value={aiInput} onChange={(e) => setAiInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") sendAiMessage(aiInput); }}
-              placeholder="Ask the AI assistant..."
-              className="flex-1 px-3.5 py-2.5 rounded-lg border border-line text-sm text-ink focus:outline-none focus:border-brand transition-colors"
-            />
-            <button onClick={() => sendAiMessage(aiInput)} className="btn btn-primary px-3.5 py-2.5"><Send className="w-4 h-4" strokeWidth={1.75} /></button>
           </div>
         </div>
       )}

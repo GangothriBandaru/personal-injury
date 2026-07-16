@@ -1,25 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import {
   X, Download, Printer, History, Expand, Shrink, ChevronDown, FileText, Eye,
-  ShieldCheck, Gavel, Clock, GitCompare, RotateCcw, Send, Folder, FolderOpen,
+  ShieldCheck, Clock, GitCompare, RotateCcw, Send, Folder, FolderOpen, CheckCircle, Image as ImageIcon,
 } from "lucide-react";
 import type { DemandPackage } from "../types/case";
-import { DAMAGE_EVIDENCE, DA_DAMAGE_FACTORS, VIOLATION_CARDS, POLICY_LIMIT, type WorkspaceModel } from "../workspace/WorkspaceTabs";
+import { DAMAGE_EVIDENCE, DA_DAMAGE_FACTORS, POLICY_LIMIT, type WorkspaceModel } from "../workspace/WorkspaceTabs";
 
 function formatUSD(n: number) {
   return "$" + Math.round(n).toLocaleString("en-US");
 }
 
+// Attorney-friendly review flow: the letter, the evidence behind it, a
+// concise damages summary, and the final submission details.
 const PREVIEW_TABS = [
   { id: "letter", label: "Demand Letter" },
-  { id: "summary", label: "Executive Summary" },
-  { id: "medical", label: "Medical Summary" },
-  { id: "economic", label: "Economic Damages" },
-  { id: "noneconomic", label: "Non-Economic Damages" },
-  { id: "negligence", label: "Negligence" },
-  { id: "violations", label: "Violations" },
   { id: "documents", label: "Supporting Documents" },
-  { id: "settlement", label: "Settlement Demand" },
+  { id: "damages", label: "Damages Summary" },
+  { id: "settlement", label: "Settlement Details" },
 ] as const;
 type PreviewTabId = (typeof PREVIEW_TABS)[number]["id"];
 
@@ -40,12 +37,8 @@ const MEDICAL_BILL_DOCS: FinancialDoc[] = [
   { file: "Out_of_Pocket_Receipts.pdf", amount: 5000 },
 ];
 
-type DocFolder = "Medical Records" | "Hospital Bills" | "Police Reports" | "Expert Reports" | "Employment Records" | "Witness Statements";
+type DocFolder = "Medical Records" | "Medical Bills" | "Police Report" | "Accident Photos" | "Employment / Wage Loss" | "Expert Reports" | "Other Exhibits";
 const DOC_FOLDERS: { name: DocFolder; docs: { file: string; amount?: number; note: string }[] }[] = [
-  {
-    name: "Hospital Bills",
-    docs: MEDICAL_BILL_DOCS.map((d) => ({ file: d.file, amount: d.amount, note: "Verified charge, reconciles to the Medical Bills total." })),
-  },
   {
     name: "Medical Records",
     docs: [
@@ -55,10 +48,29 @@ const DOC_FOLDERS: { name: DocFolder; docs: { file: string; amount?: number; not
     ],
   },
   {
-    name: "Police Reports",
+    name: "Medical Bills",
+    docs: MEDICAL_BILL_DOCS.map((d) => ({ file: d.file, amount: d.amount, note: "Verified charge, reconciles to the Medical Bills total." })),
+  },
+  {
+    name: "Police Report",
     docs: [
       { file: "Police_Report.pdf", note: "Responding officer's fault determination." },
       { file: "Officer_Narrative.pdf", note: "Contemporaneous scene narrative." },
+    ],
+  },
+  {
+    name: "Accident Photos",
+    docs: [
+      { file: "Scene_Photo_01.jpg", note: "Intersection view showing the point of impact." },
+      { file: "Scene_Photo_02.jpg", note: "Vehicle damage consistent with the reconstruction report." },
+      { file: "Traffic_Camera_Still.png", note: "Traffic-camera still corroborating the signal violation." },
+    ],
+  },
+  {
+    name: "Employment / Wage Loss",
+    docs: [
+      { file: "Wage_Loss_Statement.pdf", note: "Employer-verified wage loss during treatment." },
+      { file: "Employment_Verification.pdf", note: "Confirms pre-incident employment and earnings." },
     ],
   },
   {
@@ -69,14 +81,7 @@ const DOC_FOLDERS: { name: DocFolder; docs: { file: string; amount?: number; not
     ],
   },
   {
-    name: "Employment Records",
-    docs: [
-      { file: "Wage_Loss_Statement.pdf", note: "Employer-verified wage loss during treatment." },
-      { file: "Employment_Verification.pdf", note: "Confirms pre-incident employment and earnings." },
-    ],
-  },
-  {
-    name: "Witness Statements",
+    name: "Other Exhibits",
     docs: [
       { file: "Witness_Statement_A.pdf", note: "Corroborates the failure-to-yield violation." },
       { file: "Witness_Statement_B.pdf", note: "Corroborates the red-light signal violation." },
@@ -150,14 +155,10 @@ export function DemandPackagePreviewModal({ pkg, model, onClose, onSend }: Deman
   const nonEconomicTotal = economicTotal * model.multiplier;
   const medicalBillsTotal = DAMAGE_EVIDENCE.find((e) => e.category === "Medical Bills")?.amount ?? 0;
 
-  const [duty, breach, causation] = [
-    `As a commercial motor carrier operating in ${model.jurisdiction}, the defendant owed a duty to operate its vehicle in compliance with Illinois traffic statutes and federal motor-carrier safety regulations.`,
-    "The defendant breached that duty by entering the intersection against the plaintiff's right-of-way and against the traffic-control signal, while traveling above the posted speed limit.",
-    "Scene reconstruction, event-data-recorder telemetry, and witness corroboration directly tie the defendant's breach to the collision and the resulting cervical injury.",
-  ];
-
-  const stateStatutes = VIOLATION_CARDS.filter((v) => v.statute.startsWith("625"));
-  const federalRegs = VIOLATION_CARDS.filter((v) => !v.statute.startsWith("625"));
+  // Concise, summary-only views — the top categories by amount / severity,
+  // not the full itemized Damage Analysis breakdown.
+  const topEconomicCategories = [...DAMAGE_EVIDENCE].sort((a, b) => b.amount - a.amount).slice(0, 3);
+  const topNonEconomicCategories = [...DA_DAMAGE_FACTORS].sort((a, b) => b.aiMultiplier - a.aiMultiplier).slice(0, 3);
 
   return (
     <div
@@ -220,197 +221,29 @@ export function DemandPackagePreviewModal({ pkg, model, onClose, onSend }: Deman
         <div className="flex-1 flex overflow-hidden">
           <div ref={contentRef} className="flex-1 overflow-y-auto p-6">
             {activeTab === "letter" && (
-              <div className="max-w-3xl mx-auto rounded-xl border border-line bg-offwhite p-6 space-y-4 text-sm text-ink leading-relaxed font-serif select-text">
-                <p>To: Claims Department, {model.insuranceCarrier}</p>
-                <p>Re: Settlement Demand — {model.plaintiff} v. {model.defendant} · Incident Date: {model.incidentDate}</p>
-                <p>Dear Claims Representative,</p>
-                <p>
-                  This firm represents {model.plaintiff} in connection with injuries sustained on {model.incidentDate} in {model.jurisdiction}. Liability rests squarely with your insured, whose commercial vehicle failed to yield the right-of-way and entered the intersection in violation of Illinois traffic statutes. As a result, {model.plaintiff} sustained a two-level cervical herniation requiring ongoing medical treatment.
-                </p>
-                <p>
-                  Verified economic damages of {formatUSD(economicTotal)} — comprising medical bills, lost wages, future medical care, and rehabilitation — are fully documented in the enclosed records. Given the severity and permanence of the injuries, non-economic damages are valued at {formatUSD(nonEconomicTotal)}.
-                </p>
-                <p>
-                  We demand payment of {formatUSD(pkg.estimatedAmount)} in full settlement of this claim within 30 days of receipt. We trust {model.insuranceCarrier} will give this matter prompt attention.
-                </p>
-                <p>Sincerely,<br />Sarah Chen, Esq.<br />Counsel for {model.plaintiff}</p>
-              </div>
-            )}
-
-            {activeTab === "summary" && (
-              <div className="max-w-3xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {([
-                  ["Claimant", model.plaintiff], ["Defendant", model.defendant], ["Attorney", "Sarah Chen, Esq."],
-                  ["Venue", model.jurisdiction], ["Case Number", model.caseId], ["Settlement Strategy", pkg.generatedFrom],
-                  ["Policy Limit", formatUSD(POLICY_LIMIT)], ["Estimated Demand", formatUSD(pkg.estimatedAmount)],
-                  ["Confidence", `${model.confidence}%`],
-                ] as const).map(([label, value]) => (
-                  <div key={label} className="rounded-xl border border-line bg-offwhite p-3.5">
-                    <div className="eyebrow">{label}</div>
-                    <div className="mt-1.5 text-sm font-semibold text-ink">{value}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {activeTab === "medical" && (
-              <div className="max-w-3xl mx-auto space-y-3">
-                {[
-                  { title: "Timeline", body: `Injury sustained ${model.incidentDate}; emergency evaluation same day; MRI-confirmed cervical herniation within two weeks; ongoing pain-management and physical therapy through the present.` },
-                  { title: "Diagnoses", body: "Two-level cervical disc herniation with nerve-root compression; chronic pain syndrome; secondary cognitive and emotional sequelae." },
-                  { title: "Treatments", body: "Emergency stabilization, diagnostic imaging, pain-management specialist care, and a supervised physical therapy program." },
-                  { title: "Surgeries", body: "No surgical intervention to date; treating physicians continue to monitor for surgical candidacy if conservative treatment plateaus." },
-                  { title: "Permanent Injuries", body: "Treating specialists project permanent range-of-motion restriction and chronic pain consistent with the imaging findings." },
-                  { title: "Current Limitations", body: "Reduced mobility, disrupted sleep, and functional restrictions in work and daily activities, as documented in the physical therapy and functional-capacity records." },
-                ].map((s) => (
-                  <div key={s.title} className="rounded-xl border border-line bg-offwhite p-4">
-                    <div className="card-title text-[15px]">{s.title}</div>
-                    <p className="secondary-text mt-1.5 leading-relaxed">{s.body}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {activeTab === "economic" && (
-              <div className="max-w-3xl mx-auto space-y-6">
-                {DAMAGE_EVIDENCE.map((cat) => {
-                  const docs = cat.category === "Medical Bills" ? MEDICAL_BILL_DOCS : [{ file: cat.primary, amount: cat.amount }];
-                  return (
-                    <div key={cat.category}>
-                      <div className="flex items-center justify-between gap-2 mb-2.5">
-                        <div className="eyebrow">{cat.category}</div>
-                        <div className="secondary-text">{formatUSD(cat.amount)} verified</div>
-                      </div>
-                      <div className="space-y-2">
-                        {docs.map((d, i) => {
-                          const id = `${cat.category}-${d.file}`;
-                          return (
-                            <div key={id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-line bg-offwhite">
-                              <FileText className="w-4 h-4 text-deep shrink-0" strokeWidth={1.75} />
-                              <div className="min-w-0 flex-1">
-                                <div className="eyebrow">Document {String(i + 1).padStart(2, "0")}</div>
-                                <div className="text-sm font-medium text-ink truncate">{d.file}</div>
-                              </div>
-                              <div className="text-sm font-bold text-ink tabular-nums shrink-0">{formatUSD(d.amount)}</div>
-                              <span className="pill pill-complete shrink-0">Verified</span>
-                              <div className="flex items-center gap-1 shrink-0">
-                                <button className="p-1.5 rounded-lg hover:bg-wash text-ink transition-colors" title="View"><Eye className="w-3.5 h-3.5" strokeWidth={1.75} /></button>
-                                <button onClick={() => markDownloaded(id)} className="p-1.5 rounded-lg hover:bg-wash text-ink transition-colors" title="Download">
-                                  {downloadedIds.has(id) ? <ShieldCheck className="w-3.5 h-3.5 text-deep" strokeWidth={1.75} /> : <Download className="w-3.5 h-3.5" strokeWidth={1.75} />}
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-                <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-ink text-white">
-                  <div className="text-sm font-semibold">Total Verified Economic Damages</div>
-                  <div className="text-sm font-bold tabular-nums">{formatUSD(economicTotal)}</div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === "noneconomic" && (
-              <div className="max-w-3xl mx-auto space-y-3">
-                {DA_DAMAGE_FACTORS.map((f) => (
-                  <div key={f.category} className="rounded-xl border border-line bg-offwhite p-4">
-                    <div className="flex items-center justify-between gap-3 flex-wrap">
-                      <div className="card-title text-[15px]">{f.category}</div>
-                      <div className="text-right">
-                        <div className="eyebrow">Multiplier</div>
-                        <div className="text-sm font-bold text-ink tabular-nums">{f.aiMultiplier}×</div>
-                      </div>
-                    </div>
-                    <div className="mt-3">
-                      <div className="eyebrow mb-1">AI Summary</div>
-                      <p className="secondary-text leading-relaxed">{f.aiReasoning}</p>
-                    </div>
-                    <div className="mt-3">
-                      <div className="eyebrow mb-1.5">Supporting Evidence</div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {f.drivers.map((d) => <span key={d} className="pill pill-neutral">{d}</span>)}
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between gap-3 mt-3 pt-3 border-t border-line">
-                      <div className="text-sm font-semibold text-ink">Final Contribution</div>
-                      <div className="text-sm font-bold text-deep tabular-nums">{formatUSD(economicTotal * f.aiMultiplier)}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {activeTab === "negligence" && (
-              <div className="max-w-3xl mx-auto space-y-3">
-                <div className="rounded-xl border border-line bg-offwhite p-4">
-                  <div className="card-title text-[15px]">Negligence Findings</div>
-                  <p className="secondary-text mt-1.5 leading-relaxed">
-                    LECO's analysis establishes a clear negligence claim: the defendant owed and breached a duty of care, that breach directly caused the collision and resulting cervical injury, and the plaintiff sustained substantial economic and non-economic damages as a result.
+              <div className="flex justify-center bg-wash py-4">
+                <div className="w-full max-w-[720px] bg-white shadow-md border border-line px-14 py-14 text-sm text-ink leading-relaxed font-serif select-text">
+                  <p className="text-right mb-7">{new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</p>
+                  <p className="mb-0.5">Claims Department</p>
+                  <p className="mb-0.5">{model.insuranceCarrier}</p>
+                  <p className="mb-6">Via Certified Mail &amp; Email</p>
+                  <p className="font-semibold mb-6">
+                    Re:&nbsp; Settlement Demand — {model.plaintiff} v. {model.defendant}<br />
+                    Date of Loss: {model.incidentDate}&nbsp;&nbsp;|&nbsp;&nbsp;Claimant: {model.plaintiff}
                   </p>
-                </div>
-                <div className="rounded-xl border border-line bg-offwhite p-4">
-                  <div className="card-title text-[15px]">Applicable Duty Breaches</div>
-                  <ul className="mt-1.5 space-y-1.5">
-                    {VIOLATION_CARDS.map((v) => (
-                      <li key={v.id} className="flex items-start gap-2 text-sm text-ink">
-                        <Gavel className="w-3.5 h-3.5 text-deep mt-0.5 shrink-0" strokeWidth={1.75} /> {v.title}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="rounded-xl border border-line bg-offwhite p-4">
-                  <div className="card-title text-[15px]">Supporting Evidence</div>
-                  <p className="secondary-text mt-1.5 leading-relaxed">{causation}</p>
-                </div>
-                <div className="rounded-xl border border-line bg-offwhite p-4">
-                  <div className="card-title text-[15px]">Attorney Narrative</div>
-                  <p className="secondary-text mt-1.5 leading-relaxed">{duty} {breach}</p>
-                </div>
-              </div>
-            )}
-
-            {activeTab === "violations" && (
-              <div className="max-w-3xl mx-auto space-y-5">
-                <div>
-                  <div className="eyebrow mb-2">Statutes</div>
-                  <div className="space-y-2.5">
-                    {stateStatutes.map((v) => (
-                      <div key={v.id} className="rounded-xl border border-line bg-offwhite p-4">
-                        <div className="card-title text-[15px]">{v.title}</div>
-                        <div className="mono-ref mt-1">{v.statute}</div>
-                        <p className="secondary-text mt-2 leading-relaxed">{v.aiSummary}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <div className="eyebrow mb-2">Regulations</div>
-                  <div className="space-y-2.5">
-                    {federalRegs.map((v) => (
-                      <div key={v.id} className="rounded-xl border border-line bg-offwhite p-4">
-                        <div className="card-title text-[15px]">{v.title}</div>
-                        <div className="mono-ref mt-1">{v.statute}</div>
-                        <p className="secondary-text mt-2 leading-relaxed">{v.aiSummary}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <div className="eyebrow mb-2">Supporting Evidence &amp; Violation Explanations</div>
-                  <div className="space-y-2.5">
-                    {VIOLATION_CARDS.map((v) => (
-                      <div key={v.id} className="rounded-xl border border-line bg-offwhite p-4">
-                        <div className="card-title text-[15px]">{v.title}</div>
-                        <p className="secondary-text mt-1.5 leading-relaxed">{v.whyApplied}</p>
-                        <div className="flex flex-wrap gap-1.5 mt-2">
-                          {v.evidence.map((e) => <span key={e} className="pill pill-neutral">{e}</span>)}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <p className="mb-4">Dear Claims Representative:</p>
+                  <p className="mb-4">
+                    This firm represents {model.plaintiff} in connection with injuries sustained on {model.incidentDate} in {model.jurisdiction}. Liability rests squarely with your insured, whose commercial vehicle failed to yield the right-of-way and entered the intersection in violation of Illinois traffic statutes. As a result, {model.plaintiff} sustained a two-level cervical herniation requiring ongoing medical treatment.
+                  </p>
+                  <p className="mb-4">
+                    Verified economic damages of {formatUSD(economicTotal)} — comprising medical bills, lost wages, future medical care, and rehabilitation — are fully documented in the enclosed records. Given the severity and permanence of the injuries, non-economic damages are valued at {formatUSD(nonEconomicTotal)}.
+                  </p>
+                  <p className="mb-2">
+                    We demand payment of {formatUSD(pkg.estimatedAmount)} in full settlement of this claim within 30 days of receipt. We trust {model.insuranceCarrier} will give this matter prompt attention.
+                  </p>
+                  <p className="mt-2">Sincerely,</p>
+                  <p className="mt-12 mb-0.5">Sarah Chen, Esq.</p>
+                  <p>Counsel for {model.plaintiff}</p>
                 </div>
               </div>
             )}
@@ -433,9 +266,10 @@ export function DemandPackagePreviewModal({ pkg, model, onClose, onSend }: Deman
                         <div className="p-3 space-y-2 bg-white">
                           {folder.docs.map((d, i) => {
                             const id = `${folder.name}-${d.file}`;
+                            const isPhoto = /\.(jpg|jpeg|png)$/i.test(d.file);
                             return (
                               <div key={id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-line bg-offwhite">
-                                <FileText className="w-4 h-4 text-deep shrink-0" strokeWidth={1.75} />
+                                {isPhoto ? <ImageIcon className="w-4 h-4 text-deep shrink-0" strokeWidth={1.75} /> : <FileText className="w-4 h-4 text-deep shrink-0" strokeWidth={1.75} />}
                                 <div className="min-w-0 flex-1">
                                   <div className="eyebrow">Document {String(i + 1).padStart(2, "0")}</div>
                                   <div className="text-sm font-medium text-ink truncate">{d.file}</div>
@@ -466,25 +300,80 @@ export function DemandPackagePreviewModal({ pkg, model, onClose, onSend }: Deman
               </div>
             )}
 
-            {activeTab === "settlement" && (
-              <div className="max-w-3xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {([
-                  ["Demand Amount", formatUSD(pkg.estimatedAmount)], ["Recipient", "Claims Department"],
-                  ["Insurance Carrier", model.insuranceCarrier], ["Delivery Method", "Certified Mail &amp; Email"],
-                  ["Response Deadline", "30 days from receipt"],
-                ] as const).map(([label, value]) => (
-                  <div key={label} className="rounded-xl border border-line bg-offwhite p-3.5">
-                    <div className="eyebrow">{label}</div>
-                    <div className="mt-1.5 text-sm font-semibold text-ink" dangerouslySetInnerHTML={{ __html: value }} />
-                  </div>
-                ))}
-                <div className="rounded-xl border border-line bg-offwhite p-3.5 flex items-center justify-between">
-                  <div className="eyebrow">Demand Letter Attached</div>
-                  <ShieldCheck className="w-4 h-4 text-deep" strokeWidth={1.75} />
+            {activeTab === "damages" && (
+              <div className="max-w-3xl mx-auto space-y-5">
+                <div className="rounded-xl border border-line bg-offwhite p-4">
+                  <div className="eyebrow mb-2.5">Economic Damages</div>
+                  <ul className="space-y-1.5">
+                    {topEconomicCategories.map((c) => (
+                      <li key={c.category} className="flex items-center justify-between gap-3 text-sm text-ink">
+                        <span>{c.category}</span>
+                        <span className="font-semibold tabular-nums">{formatUSD(c.amount)}</span>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <div className="rounded-xl border border-line bg-offwhite p-3.5 flex items-center justify-between">
-                  <div className="eyebrow">Supporting Documents Attached</div>
-                  <span className="text-sm font-semibold text-ink tabular-nums">{pkg.docCount}</span>
+                <div className="rounded-xl border border-line bg-offwhite p-4">
+                  <div className="eyebrow mb-2.5">Non-Economic Damages</div>
+                  <ul className="space-y-1.5">
+                    {topNonEconomicCategories.map((f) => (
+                      <li key={f.category} className="flex items-center justify-between gap-3 text-sm text-ink">
+                        <span>{f.category}</span>
+                        <span className="font-semibold tabular-nums">{f.aiMultiplier}×</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="rounded-xl border border-line overflow-hidden">
+                  <div className="flex items-center justify-between gap-3 px-4 py-3 bg-white">
+                    <div className="text-sm font-semibold text-ink">Total Economic Damages</div>
+                    <div className="text-sm font-bold text-ink tabular-nums">{formatUSD(economicTotal)}</div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 px-4 py-3 bg-offwhite border-t border-line">
+                    <div className="text-sm font-semibold text-ink">Estimated Non-Economic Damages</div>
+                    <div className="text-sm font-bold text-ink tabular-nums">{formatUSD(nonEconomicTotal)}</div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 px-4 py-3 bg-ink text-white">
+                    <div className="text-sm font-semibold">Final Demand Amount</div>
+                    <div className="text-sm font-bold tabular-nums">{formatUSD(pkg.estimatedAmount)}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === "settlement" && (
+              <div className="max-w-3xl mx-auto space-y-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {([
+                    ["Demand Amount", formatUSD(pkg.estimatedAmount)],
+                    ["Insurance Carrier", model.insuranceCarrier],
+                    ["Defendant", model.defendant],
+                    ["Policy Coverage", formatUSD(POLICY_LIMIT)],
+                    ["Delivery Method", "Certified Mail &amp; Email"],
+                    ["Response Deadline", "30 days from receipt"],
+                  ] as const).map(([label, value]) => (
+                    <div key={label} className="rounded-xl border border-line bg-offwhite p-3.5">
+                      <div className="eyebrow">{label}</div>
+                      <div className="mt-1.5 text-sm font-semibold text-ink" dangerouslySetInnerHTML={{ __html: value }} />
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <div className="eyebrow mb-2.5">Package Checklist</div>
+                  <div className="rounded-xl border border-line overflow-hidden">
+                    {[
+                      "Demand Letter Included",
+                      "Medical Records Attached",
+                      "Medical Bills Attached",
+                      "Police Report Attached",
+                      "Supporting Documents Attached",
+                    ].map((item, i) => (
+                      <div key={item} className={`flex items-center gap-2.5 px-4 py-3 ${i % 2 === 0 ? "bg-white" : "bg-offwhite"}`}>
+                        <CheckCircle className="w-4 h-4 text-deep shrink-0" strokeWidth={1.75} />
+                        <span className="text-sm text-ink">{item}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}

@@ -7,6 +7,7 @@ import {
   LiabilityAnalysisTab, EvidenceRepositoryTab, DemandPackageTab, NegotiationTab,
 } from "../workspace/WorkspaceTabs";
 import { DemandSpacePage } from "./DemandSpacePage";
+import { DemandPackageEditorPage } from "./DemandPackageEditorPage";
 
 interface CaseWorkspacePageProps {
   caseData?: any;
@@ -31,27 +32,30 @@ const TABS = [
 const BASE_ECONOMIC = 161450;
 const MULTIPLIER = 9;
 
-// Sequential steps shown while a demand package is being generated.
+// Sequential steps shown while the AI drafts the Demand Letter — the only
+// document generated up front. A full package is assembled later, from this.
 const GENERATE_STEPS = [
-  "Collecting verified medical records...",
-  "Compiling economic damages...",
-  "Calculating non-economic damages...",
-  "Linking negligence findings...",
-  "Applying legal statutes...",
-  "Matching historical cases...",
-  "Drafting demand letter...",
-  "Organizing supporting exhibits...",
-  "Building final demand package...",
+  "Reviewing case facts...",
+  "Extracting medical chronology...",
+  "Calculating economic damages...",
+  "Drafting liability narrative...",
+  "Building settlement demand...",
+  "Formatting legal language...",
+  "Generating demand letter...",
 ];
 
 export function CaseWorkspacePage({ caseData, analysisFindings = [], documents = [], onBackToIntake, onNavigateToValuation }: CaseWorkspacePageProps) {
   const [activeTab, setActiveTab] = useState("overview");
 
-  // ── Generate Demand → Demand Space workflow ──
+  // ── Generate Demand → Demand Letter draft → Demand Space workflow ──
+  // A full package is never created up front — only the Demand Letter is
+  // generated, then opened for the attorney to review and save. The package
+  // record itself is created only once that letter is saved.
   const [demandPackages, setDemandPackages] = useState<DemandPackage[]>([]);
   const [genPhase, setGenPhase] = useState<"idle" | "running" | "success">("idle");
   const [genStep, setGenStep] = useState(0);
   const [pendingGen, setPendingGen] = useState<{ strategyLabel: string; amount: number } | null>(null);
+  const [letterDraft, setLetterDraft] = useState<DemandPackage | null>(null);
 
   const startGenerateDemand = (strategyLabel: string, amount: number) => {
     setPendingGen({ strategyLabel, amount });
@@ -66,36 +70,43 @@ export function CaseWorkspacePage({ caseData, analysisFindings = [], documents =
       const t = setTimeout(() => setGenPhase("success"), 300);
       return () => clearTimeout(t);
     }
-    const t = setTimeout(() => setGenStep((s) => s + 1), 520);
+    const t = setTimeout(() => setGenStep((s) => s + 1), 450);
     return () => clearTimeout(t);
   }, [genPhase, genStep]);
 
-  // After the success beat, create the package and jump into Demand Space.
+  // After the success beat, open the Demand Letter editor — no package yet.
   useEffect(() => {
     if (genPhase !== "success" || !pendingGen) return;
     const t = setTimeout(() => {
-      setDemandPackages((prev) => {
-        const number = prev.length + 1;
-        const pkg: DemandPackage = {
-          id: `pkg-${number}-${Date.now()}`,
-          number,
-          label: `Demand Package #${String(number).padStart(3, "0")}`,
-          status: "Draft",
-          generatedFrom: pendingGen.strategyLabel,
-          generatedAt: `Today • ${new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`,
-          estimatedAmount: pendingGen.amount,
-          docCount: 42,
-          version: "1.0",
-          isNew: true,
-        };
-        return [pkg, ...prev.map((p) => ({ ...p, isNew: false }))];
+      const number = demandPackages.length + 1;
+      setLetterDraft({
+        id: `pkg-${number}-${Date.now()}`,
+        number,
+        label: `Demand #${String(number).padStart(3, "0")}`,
+        status: "Draft",
+        generatedFrom: pendingGen.strategyLabel,
+        generatedAt: `Today • ${new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`,
+        estimatedAmount: pendingGen.amount,
+        docCount: 42,
+        version: "0.0",
       });
-      setActiveTab("demandspace");
       setGenPhase("idle");
       setPendingGen(null);
-    }, 1100);
+    }, 500);
     return () => clearTimeout(t);
-  }, [genPhase, pendingGen]);
+  }, [genPhase, pendingGen, demandPackages.length]);
+
+  // Save Changes in the letter editor: only now does the package come into
+  // existence in the Library, then we redirect to Demand Space.
+  const finalizeLetterDraft = (html: string, scrollTop: number) => {
+    if (!letterDraft) return;
+    setDemandPackages((prev) => [
+      { ...letterDraft, letterHtml: html, letterScrollTop: scrollTop, version: "1.0", isNew: true },
+      ...prev.map((p) => ({ ...p, isNew: false })),
+    ]);
+    setLetterDraft(null);
+    setActiveTab("demandspace");
+  };
 
   const updateDemandPackage = (id: string, patch: Partial<DemandPackage>) => {
     setDemandPackages((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
@@ -137,6 +148,7 @@ export function CaseWorkspacePage({ caseData, analysisFindings = [], documents =
           model={model}
           packages={demandPackages}
           onUpdatePackage={updateDemandPackage}
+          onBack={() => setActiveTab("demand")}
         />
       );
       default: return <OverviewTab {...tabProps} />;
@@ -167,7 +179,7 @@ export function CaseWorkspacePage({ caseData, analysisFindings = [], documents =
               <h1 className="page-title">{model.caseName}</h1>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <button onClick={() => setActiveTab("demandspace")} className="btn btn-secondary gap-2">
+              <button onClick={() => setActiveTab("demandspace")} className={`btn gap-2 ${activeTab === "demandspace" ? "btn-primary" : "btn-secondary"}`}>
                 <FileSignature className="w-4 h-4" strokeWidth={1.75} /> Demand Space
               </button>
               <button onClick={() => setActiveTab("evidence")} className="btn btn-secondary gap-2">
@@ -210,17 +222,17 @@ export function CaseWorkspacePage({ caseData, analysisFindings = [], documents =
         {renderTab()}
       </div>
 
-      {/* ── Generate Demand: full-screen generating / success overlay ── */}
+      {/* ── Generate Demand: centered popup with the generating / success sequence ── */}
       {genPhase !== "idle" && (
-        <div className="fixed inset-0 z-[100] bg-ink flex items-center justify-center p-6">
-          <div className="w-full max-w-md text-center">
+        <div className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-6">
+          <div className="w-full max-w-md rounded-2xl bg-ink border border-white/10 shadow-2xl p-8 text-center">
             {genPhase === "running" ? (
               <>
                 <div className="w-14 h-14 rounded-2xl bg-white/10 border border-white/15 flex items-center justify-center mx-auto mb-6">
                   <Loader2 className="w-6 h-6 text-brand animate-spin" strokeWidth={1.75} />
                 </div>
-                <h2 className="page-title text-white">Generating Demand Package</h2>
-                <p className="text-soft text-sm mt-2">Compiling legal documents, evidence, and settlement demand package.</p>
+                <h2 className="page-title text-white">Generating Demand Letter</h2>
+                <p className="text-soft text-sm mt-2">Reviewing the case record to draft an attorney-ready demand letter.</p>
                 <div className="mt-8 space-y-2.5 text-left">
                   {GENERATE_STEPS.map((label, i) => {
                     const done = i < genStep;
@@ -245,12 +257,23 @@ export function CaseWorkspacePage({ caseData, analysisFindings = [], documents =
                 <div className="w-14 h-14 rounded-2xl bg-brand/15 border border-brand/30 flex items-center justify-center mx-auto mb-6">
                   <CheckCircle className="w-7 h-7 text-brand" strokeWidth={1.75} />
                 </div>
-                <h2 className="page-title text-white">Demand Package Generated Successfully</h2>
-                <p className="text-soft text-sm mt-2">Opening Demand Space...</p>
+                <h2 className="page-title text-white">Demand Letter Generated</h2>
+                <p className="text-soft text-sm mt-2">Opening the letter for your review...</p>
               </>
             )}
           </div>
         </div>
+      )}
+
+      {/* ── Demand Letter editor — opens automatically once generation finishes ── */}
+      {letterDraft && (
+        <DemandPackageEditorPage
+          pkg={letterDraft}
+          model={model}
+          letterOnly
+          onClose={() => { setLetterDraft(null); setActiveTab("demandspace"); }}
+          onSaveLetter={finalizeLetterDraft}
+        />
       )}
     </div>
   );
