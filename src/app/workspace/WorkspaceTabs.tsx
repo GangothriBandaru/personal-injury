@@ -3585,7 +3585,30 @@ const VALUATION_BRIEF: { label: string; icon: any; text: string }[] = [
 
 // Local comparable verdicts / settlements matched to this case profile. `labels`
 // are the short category chips shown above each card.
-export const COMPARABLE_VERDICTS: { caseName: string; amount: number; summary: string; matchScore: number; labels: string[]; tags: string[]; whyThisMatters: string }[] = [
+type ComparableFilterKey = "injuryType" | "severity" | "jurisdiction" | "violation" | "legalStatute" | "caseType";
+
+type ComparableVerdict = {
+  caseName: string;
+  amount: number;
+  summary: string;
+  matchScore: number;
+  labels: string[];
+  tags: string[];
+  whyThisMatters: string;
+  similarityBreakdown: { label: string; contribution: number; explanation: string }[];
+  filterValues: Record<ComparableFilterKey, string>;
+};
+
+const COMPARABLE_FILTERS: { key: ComparableFilterKey; label: string; allLabel: string }[] = [
+  { key: "injuryType", label: "Injury Type", allLabel: "All injury types" },
+  { key: "severity", label: "Severity", allLabel: "All severity levels" },
+  { key: "jurisdiction", label: "Jurisdiction", allLabel: "All jurisdictions" },
+  { key: "violation", label: "Violation", allLabel: "All violations" },
+  { key: "legalStatute", label: "Legal Statute", allLabel: "All statutes" },
+  { key: "caseType", label: "Case Type", allLabel: "All case types" },
+];
+
+export const COMPARABLE_VERDICTS: ComparableVerdict[] = [
   {
     caseName: "Reyes v. Interstate Freight Lines",
     amount: 1_750_000,
@@ -3594,6 +3617,15 @@ export const COMPARABLE_VERDICTS: { caseName: string; amount: number; summary: s
     labels: ["Commercial Vehicle", "Cervical Injury"],
     tags: ["Red-light violation", "Commercial vehicle", "Cervical injury", "Cook County"],
     whyThisMatters: "This precedent is a strong match because the liability narrative, cervical injury pattern, and venue profile align closely with the current case and support a policy-informed settlement corridor.",
+    similarityBreakdown: [
+      { label: "Jurisdiction", contribution: 18, explanation: "Same Cook County jurisdiction" },
+      { label: "Injury Type", contribution: 22, explanation: "Cervical injury pattern" },
+      { label: "Injury Severity", contribution: 20, explanation: "Severe, ongoing impairment and care" },
+      { label: "Liability", contribution: 16, explanation: "Strong red-light violation evidence" },
+      { label: "Long-Term Impact", contribution: 10, explanation: "Similar long-term medical impact" },
+      { label: "Case Context", contribution: 8, explanation: "Comparable commercial vehicle matter" },
+    ],
+    filterValues: { injuryType: "Cervical Injury", severity: "Ongoing Care", jurisdiction: "Cook County", violation: "Red-light violation", legalStatute: "Commercial vehicle", caseType: "Commercial Vehicle" },
   },
   {
     caseName: "Donovan v. Metro Cartage Co.",
@@ -3603,6 +3635,15 @@ export const COMPARABLE_VERDICTS: { caseName: string; amount: number; summary: s
     labels: ["Commercial Vehicle", "Disputed Liability"],
     tags: ["Failure to yield", "Officer fault", "Disputed liability"],
     whyThisMatters: "This case is useful because it reflects a comparable commercial-carrier crash with a disputed liability posture, showing how a strong liability narrative can still support a meaningful recovery.",
+    similarityBreakdown: [
+      { label: "Jurisdiction", contribution: 12, explanation: "Comparable venue profile" },
+      { label: "Injury Type", contribution: 18, explanation: "Comparable collision injury pattern" },
+      { label: "Injury Severity", contribution: 17, explanation: "Meaningful injury with ongoing care" },
+      { label: "Liability", contribution: 17, explanation: "Officer fault determination" },
+      { label: "Long-Term Impact", contribution: 14, explanation: "Comparable recovery implications" },
+      { label: "Case Context", contribution: 11, explanation: "Similar commercial-carrier crash" },
+    ],
+    filterValues: { injuryType: "Delivery Vehicle Collision", severity: "Disputed Liability", jurisdiction: "Not specified", violation: "Failure to yield", legalStatute: "Officer fault", caseType: "Commercial Vehicle" },
   },
   {
     caseName: "Whitfield v. Prairie Logistics",
@@ -3612,6 +3653,15 @@ export const COMPARABLE_VERDICTS: { caseName: string; amount: number; summary: s
     labels: ["Permanent Impairment", "Policy-Limit"],
     tags: ["Permanent impairment", "Policy-limit demand", "MVA"],
     whyThisMatters: "This precedent is relevant because it demonstrates how permanent impairment and policy-limit exposure can shape settlement leverage in a similar commercial vehicle matter.",
+    similarityBreakdown: [
+      { label: "Jurisdiction", contribution: 11, explanation: "Comparable venue profile" },
+      { label: "Injury Type", contribution: 16, explanation: "Comparable impairment pattern" },
+      { label: "Injury Severity", contribution: 19, explanation: "Permanent impairment" },
+      { label: "Liability", contribution: 14, explanation: "Comparable liability posture" },
+      { label: "Long-Term Impact", contribution: 15, explanation: "Similar lasting medical impact" },
+      { label: "Case Context", contribution: 10, explanation: "Similar policy-limit MVA context" },
+    ],
+    filterValues: { injuryType: "Permanent Impairment", severity: "Permanent Impairment", jurisdiction: "Not specified", violation: "Policy-limit demand", legalStatute: "Policy-limit demand", caseType: "MVA" },
   },
 ];
 
@@ -3679,8 +3729,49 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
   const [showGraph, setShowGraph] = useState(false); // done-state toggle: strategy ↔ context graph
   const [selectedPrecedent, setSelectedPrecedent] = useState<(typeof COMPARABLE_VERDICTS)[number] | null>(null);
   const [precedentChatOpen, setPrecedentChatOpen] = useState(false);
-  const [precedentAccordionOpen, setPrecedentAccordionOpen] = useState<Record<string, boolean>>({});
+  const [similarityBreakdownOpen, setSimilarityBreakdownOpen] = useState<string | null>(null);
+  const [precedentWhyOpen, setPrecedentWhyOpen] = useState<string | null>(null);
+  const [caseSearch, setCaseSearch] = useState("");
+  const [caseFiltersOpen, setCaseFiltersOpen] = useState(false);
+  const [draftCaseFilters, setDraftCaseFilters] = useState<Record<ComparableFilterKey, string>>({
+    injuryType: "",
+    severity: "",
+    jurisdiction: "",
+    violation: "",
+    legalStatute: "",
+    caseType: "",
+  });
+  const [caseFilters, setCaseFilters] = useState<Record<ComparableFilterKey, string>>({
+    injuryType: "",
+    severity: "",
+    jurisdiction: "",
+    violation: "",
+    legalStatute: "",
+    caseType: "",
+  });
   const [supportingFindingsOpen, setSupportingFindingsOpen] = useState<Record<string, boolean>>({});
+
+  const normalizedCaseSearch = caseSearch.trim().toLowerCase();
+  const visibleComparableVerdicts = COMPARABLE_VERDICTS.filter((v) => {
+    const searchableText = [
+      v.caseName,
+      v.summary,
+      v.whyThisMatters,
+      ...v.labels,
+      ...v.tags,
+      ...Object.values(v.filterValues),
+    ].join(" ").toLowerCase();
+    const matchesSearch = !normalizedCaseSearch || searchableText.includes(normalizedCaseSearch);
+    const matchesFilters = COMPARABLE_FILTERS.every(({ key }) => !caseFilters[key] || v.filterValues[key] === caseFilters[key]);
+    return matchesSearch && matchesFilters;
+  });
+  const hasCaseDiscovery = Boolean(normalizedCaseSearch || Object.values(caseFilters).some(Boolean));
+  const activeCaseFilters = COMPARABLE_FILTERS.filter(({ key }) => caseFilters[key]);
+  const clearCaseFilters = () => {
+    const emptyFilters = { injuryType: "", severity: "", jurisdiction: "", violation: "", legalStatute: "", caseType: "" };
+    setCaseFilters(emptyFilters);
+    setDraftCaseFilters(emptyFilters);
+  };
 
   // Lock background scroll while the precedent drawer is open, so the dimmed
   // backdrop always covers the full viewport regardless of scroll position.
@@ -4035,7 +4126,7 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
   }
 
   return (
-    <div className="space-y-10">
+    <div className="flex flex-col space-y-10">
       {/* ── 1 · Litigation Strategy Dashboard (case overview) ── */}
       <div className="lg-card p-6 flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
@@ -4070,7 +4161,7 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
         ))}
       </div>
 
-      <div className="lg-card p-6 relative overflow-hidden">
+      <div className="lg-card p-6 relative overflow-hidden order-1">
         <div className="absolute left-0 top-4 bottom-4 w-1 rounded-full bg-brand" />
         <div className="pl-5">
           <div className="eyebrow text-brand mb-2">STRATEGIC LITIGATION VALUATION BRIEF</div>
@@ -4081,7 +4172,7 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
       </div>
 
       {/* ── 2 · Strategic Settlement Corridor — interactive AI workflow (idle → analyzing → done) ── */}
-      <div className="bg-ink rounded-xl overflow-hidden">
+      <div className="bg-ink rounded-xl overflow-hidden order-3">
         <div className="grid grid-cols-1 lg:grid-cols-5 items-stretch">
 
           {/* LEFT panel — idle copy / processing steps / insights found */}
@@ -4241,21 +4332,135 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
       </div>
 
       {/* ── 3 · Precedent Analysis — historical cases used ── */}
-      <div className="lg-card p-6">
+      <div className="lg-card p-6 order-1">
         <div className="mb-5">
           <h2 className="section-header">Similar Past Cases</h2>
           <p className="secondary-text mt-1 max-w-2xl">AI found historical cases most similar to the current matter to support the recommended litigation strategy.</p>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {COMPARABLE_VERDICTS.map((v) => {
-            const isOpen = precedentAccordionOpen[v.caseName] ?? false;
+
+        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center mb-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#5B6B78]" strokeWidth={1.75} />
+            <input
+              value={caseSearch}
+              onChange={(e) => setCaseSearch(e.target.value)}
+              placeholder="Search past cases"
+              className="w-full bg-white border border-line rounded-lg pl-10 pr-4 py-2.5 text-sm text-ink placeholder:text-[#5B6B78] focus:outline-none focus:border-brand transition-colors"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setCaseFiltersOpen((open) => !open)}
+            className={`inline-flex items-center justify-center gap-2 bg-white border border-line rounded-lg px-3 py-2.5 text-sm transition-colors ${caseFiltersOpen || hasCaseDiscovery && activeCaseFilters.length > 0 ? "text-deep border-brand" : "text-ink hover:text-deep hover:border-brand"}`}
+          >
+            <SlidersHorizontal className="w-4 h-4" strokeWidth={1.75} />
+            Filters
+          </button>
+        </div>
+
+        {caseFiltersOpen && (
+          <div className="mb-5 rounded-lg border border-line bg-white p-4">
+            <div className="eyebrow mb-3">Filter Cases</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+              {COMPARABLE_FILTERS.map(({ key, label, allLabel }) => {
+                const options = [...new Set(COMPARABLE_VERDICTS.map((v) => v.filterValues[key]))];
+                return (
+                  <label key={key} className="flex items-center gap-3 text-sm">
+                    <span className="text-[#5B6B78] min-w-28">{label}</span>
+                    <select
+                      value={draftCaseFilters[key]}
+                      onChange={(e) => setDraftCaseFilters((current) => ({ ...current, [key]: e.target.value }))}
+                      className="min-w-0 flex-1 bg-white border border-line rounded-lg px-3 py-2 text-sm text-ink focus:outline-none focus:border-brand transition-colors"
+                    >
+                      <option value="">{allLabel}</option>
+                      {options.map((option) => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-end gap-3 mt-4 pt-3 border-t border-line">
+              <button
+                type="button"
+                onClick={clearCaseFilters}
+                className="text-sm text-deep hover:text-ink transition-colors"
+              >
+                Clear filters
+              </button>
+              <button
+                type="button"
+                onClick={() => { setCaseFilters(draftCaseFilters); setCaseFiltersOpen(false); }}
+                className="text-sm font-semibold text-deep hover:text-ink transition-colors"
+              >
+                Apply filters
+              </button>
+            </div>
+          </div>
+        )}
+
+        {activeCaseFilters.length > 0 && (
+          <div className="mb-5">
+            <div className="eyebrow mb-2">Active Filters</div>
+            <div className="flex flex-wrap gap-2">
+              {activeCaseFilters.map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    setCaseFilters((current) => ({ ...current, [key]: "" }));
+                    setDraftCaseFilters((current) => ({ ...current, [key]: "" }));
+                  }}
+                  className="pill pill-neutral hover:text-deep transition-colors"
+                >
+                  {caseFilters[key]} <span aria-hidden="true">×</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="mb-4">
+          <h3 className="card-title">{hasCaseDiscovery ? "Filtered Cases" : "Recommended Cases"}</h3>
+          <p className="secondary-text mt-1 text-xs">
+            {hasCaseDiscovery ? "Cases matching your selected search and filter criteria." : "AI-selected cases based on similarity to the current matter."}
+          </p>
+        </div>
+
+        {visibleComparableVerdicts.length === 0 ? (
+          <div className="lg-card flex flex-col items-center justify-center py-12 text-center">
+            <p className="text-sm font-medium text-ink">No matching cases found.</p>
+            <p className="secondary-text mt-1">Try a different search term or adjust your filters.</p>
+            <button
+              type="button"
+              onClick={() => { setCaseSearch(""); clearCaseFilters(); }}
+              className="mt-3 text-sm font-semibold text-deep hover:text-ink transition-colors"
+            >
+              Clear search
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {visibleComparableVerdicts.map((v) => {
+            const isWhyOpen = precedentWhyOpen === v.caseName;
             return (
               <div key={v.caseName} className="lg-card lg-card-i p-5 flex flex-col">
                 <h3 className="card-title leading-snug mb-3">{v.caseName}</h3>
                 <div className="text-xl font-bold text-ink tabular-nums mb-2">{formatUSD(v.amount)}</div>
                 <div className="text-sm font-medium text-deep mb-3">Final Settlement</div>
                 <div className="flex flex-wrap items-center gap-1.5 mb-4">
-                  <span className="pill pill-complete">{v.matchScore}% Match</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const breakdownIsOpen = similarityBreakdownOpen === v.caseName;
+                      const whyIsOpen = precedentWhyOpen === v.caseName;
+                      setPrecedentWhyOpen(null);
+                      setSimilarityBreakdownOpen(breakdownIsOpen && !whyIsOpen ? null : v.caseName);
+                    }}
+                    className="pill pill-complete cursor-pointer hover:text-deep hover:underline transition-colors"
+                    aria-expanded={similarityBreakdownOpen === v.caseName}
+                  >
+                    {v.matchScore}% Match
+                  </button>
                   {v.labels.map((l) => (
                     <span key={l} className="pill pill-neutral">{l}</span>
                   ))}
@@ -4263,18 +4468,59 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
 
                 <div className="rounded-xl border border-line overflow-hidden bg-offwhite/70">
                   <button
-                    onClick={() => setPrecedentAccordionOpen((prev) => ({ ...prev, [v.caseName]: !isOpen }))}
+                    onClick={() => {
+                      const shouldOpen = precedentWhyOpen !== v.caseName;
+                      setPrecedentWhyOpen(shouldOpen ? v.caseName : null);
+                      setSimilarityBreakdownOpen(shouldOpen ? v.caseName : null);
+                    }}
                     className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 hover:bg-wash transition-colors"
                   >
                     <span className="flex items-center gap-1.5 text-xs font-semibold text-ink">Why this case matters</span>
-                    <ChevronDown className={`w-4 h-4 text-deep transition-transform ${isOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
+                    <ChevronDown className={`w-4 h-4 text-deep transition-transform ${isWhyOpen ? "rotate-180" : ""}`} strokeWidth={1.75} />
                   </button>
-                  {isOpen && (
+                  {isWhyOpen && (
                     <div className="px-3.5 pb-3.5 pt-2 border-t border-line bg-white/80">
                       <p className="secondary-text leading-relaxed">{v.whyThisMatters}</p>
                     </div>
                   )}
                 </div>
+
+                {similarityBreakdownOpen === v.caseName && (
+                  <div className="mt-3 rounded-xl border border-line bg-white/80 px-3.5 pb-3.5 pt-3">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <span className="eyebrow">Similarity Breakdown</span>
+                      <span className="text-xs font-bold text-deep tabular-nums">{v.matchScore}% Match</span>
+                    </div>
+                    <div className="space-y-2.5">
+                      {v.similarityBreakdown.map((factor) => (
+                        <div key={factor.label}>
+                          <div className="flex items-center justify-between gap-3 text-xs mb-1">
+                            <span className="text-[#5B6B78]">{factor.label}</span>
+                            <span className="font-semibold text-ink tabular-nums">{factor.contribution}%</span>
+                          </div>
+                          <div className="h-1.5 rounded-full bg-wash overflow-hidden">
+                            <div className="h-full rounded-full bg-brand" style={{ width: `${factor.contribution}%` }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 pt-3 border-t border-line">
+                      <div className="eyebrow mb-2">Why this case matches</div>
+                      <ul className="space-y-1">
+                        {v.similarityBreakdown.map((factor) => (
+                          <li key={factor.label} className="text-xs text-[#5B6B78] flex items-start gap-2">
+                            <CheckCircle className="w-3.5 h-3.5 text-deep shrink-0 mt-0.5" strokeWidth={1.75} />
+                            <span>{factor.explanation}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between gap-3 text-xs font-semibold text-ink">
+                      <span>Overall Match</span>
+                      <span className="text-deep tabular-nums">{v.similarityBreakdown.reduce((total, factor) => total + factor.contribution, 0)}%</span>
+                    </div>
+                  </div>
+                )}
 
                 <div className="mt-4">
                   <div className="eyebrow mb-2">Key Matching Factors</div>
@@ -4294,7 +4540,8 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
               </div>
             );
           })}
-        </div>
+          </div>
+        )}
       </div>
 
       {selectedPrecedent && (
@@ -4383,7 +4630,7 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
       )}
 
       {/* ── 4 · Supporting Findings — strategic insights derived from negligence & violations ── */}
-      <div className="lg-card p-6">
+      <div className="lg-card p-6 order-4">
         <div className="mb-5">
           <h2 className="section-header">Supporting Findings</h2>
           <p className="secondary-text mt-1 max-w-2xl">Insights Derived from Negligence &amp; Violations</p>
@@ -4442,7 +4689,7 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
       </div>
 
       {/* ── 6 · Litigation & Trial Preparation Directives — the action plan ── */}
-      <div className="lg-card p-6">
+      <div className="lg-card p-6 order-5">
         <div className="mb-5">
           <div className="eyebrow text-deep mb-1">Action Plan</div>
           <h2 className="section-header">Litigation &amp; Trial Preparation Directives</h2>
@@ -4471,7 +4718,7 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
       </div>
 
       {/* ── 7 · Generate Demand CTA ── */}
-      <div className="bg-ink rounded-xl px-6 py-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className="bg-ink rounded-xl px-6 py-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 order-6">
         <div className="min-w-0">
           <h2 className="section-header text-white">Ready to assemble the demand</h2>
           <p className="text-soft text-sm mt-1 max-w-xl">Compile the recommended strategy, precedent, and findings into an attorney-ready demand package.</p>

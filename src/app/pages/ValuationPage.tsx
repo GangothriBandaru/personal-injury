@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { StageNavigator } from "../components/StageNavigator";
-import { ChevronLeft, ChevronRight, CheckCircle, ArrowRight, DollarSign, Shield, AlertCircle, Sparkles, ChevronDown, FileText, Eye, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, CheckCircle, ArrowRight, DollarSign, Shield, AlertCircle, Sparkles, ChevronDown, FileText, Eye, X, ChevronUp } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { AnalysisFinding } from "../types/case";
 import { DocumentWorkspaceModal } from "../components/DocumentWorkspace";
@@ -57,8 +57,6 @@ const SEVERITY_MULTIPLIER: Record<string, string> = {
   Low: "0.25×–0.5×",
 };
 
-// Non-economic damage factors the recommended multiplier is applied to. Each
-// carries an AI-assigned severity and a one-line rationale for that severity.
 const damageFactors: { category: string; severity: "Critical" | "High" | "Moderate" | "Low"; rationale: string }[] = [
   { category: "Pain & Suffering", severity: "Critical", rationale: "Treating-physician records document persistent, chronic pain requiring ongoing pain-management intervention." },
   { category: "Emotional Distress", severity: "High", rationale: "Mental-health evaluations corroborate diagnosed anxiety and post-traumatic symptoms tied to the incident." },
@@ -68,6 +66,270 @@ const damageFactors: { category: string; severity: "Critical" | "High" | "Modera
   { category: "Dignity & Independence", severity: "Moderate", rationale: "Reliance on assistive care for routine self-care tasks meaningfully reduces personal autonomy." },
   { category: "Family Relationship Impact", severity: "Moderate", rationale: "Family statements document caregiving burden and loss of consortium within the household." },
 ];
+
+// AI Multiplier Analysis reasoning for each damage factor
+interface DamageFactorReasoning {
+  whyMultiplier: string;
+  injuryProfile: { affectedArea: string; injury: string };
+  injurySeverityImpact: { intensity: string; explanation: string };
+  jurisdictionAnalysis: { venue: string; comparableCases: string; localTrend: string };
+  negligenceViolations: { breach: string; causation: string; violations: string };
+  recommendedRange: string;
+  aiRecommendation: string;
+}
+
+const damageFactorReasonings: Record<string, DamageFactorReasoning> = {
+  "Pain & Suffering": {
+    whyMultiplier: "The multiplier reflects the severity and persistence of the plaintiff's pain, supported by medical records and the lasting impact on daily life.",
+    injuryProfile: {
+      affectedArea: "Brain / Neurological System",
+      injury: "Ischemic stroke with permanent neurological damage",
+    },
+    injurySeverityImpact: {
+      intensity: "Severe",
+      explanation: "Significant and persistent physical suffering resulting from permanent neurological injury and ongoing medical treatment.",
+    },
+    jurisdictionAnalysis: {
+      venue: "Cook County, Illinois",
+      comparableCases: "Similar injury and liability cases were considered to benchmark the valuation range.",
+      localTrend: "Comparable outcomes in this jurisdiction support the selected multiplier range.",
+    },
+    negligenceViolations: {
+      breach: "Documented failures in medication management and emergency response strengthen liability.",
+      causation: "The delayed response is medically linked to the severity of the resulting neurological injury.",
+      violations: "Multiple documented care and protocol violations increase liability exposure and support a higher valuation range.",
+    },
+    recommendedRange: "2×–3×",
+    aiRecommendation: "The evidence supports a 2×–3× range, with the factor positioned toward the upper end because of the severity and lasting impact of the injury.",
+  },
+  "Emotional Distress": {
+    whyMultiplier: "Documented mental-health symptoms and psychological impact justify a significant multiplier reflecting ongoing emotional suffering.",
+    injuryProfile: {
+      affectedArea: "Mental Health / Psychological",
+      injury: "Post-traumatic stress disorder with diagnosed anxiety and depression",
+    },
+    injurySeverityImpact: {
+      intensity: "High",
+      explanation: "Substantial emotional suffering documented by clinical evaluations, affecting daily functioning and interpersonal relationships.",
+    },
+    jurisdictionAnalysis: {
+      venue: "Cook County, Illinois",
+      comparableCases: "Comparable cases with documented PTSD support a 1×–1.5× range for emotional distress.",
+      localTrend: "Illinois courts recognize mental-health damages when corroborated by professional evaluation.",
+    },
+    negligenceViolations: {
+      breach: "Inadequate emergency protocols contributed to prolonged patient distress during medical crisis.",
+      causation: "The negligent handling of the medical emergency directly caused the onset of traumatic stress symptoms.",
+      violations: "Failure to follow standard care procedures in the acute phase increased psychological harm.",
+    },
+    recommendedRange: "1×–1.5×",
+    aiRecommendation: "Mental-health evaluations support a 1×–1.5× multiplier, reflecting significant but not permanent psychological impact.",
+  },
+  "Quality of Life": {
+    whyMultiplier: "Loss of independence and inability to engage in prior activities justify a substantial non-economic damages multiplier.",
+    injuryProfile: {
+      affectedArea: "Functional Capacity / Activities of Daily Living",
+      injury: "Permanent reduction in mobility and independence requiring adaptive strategies",
+    },
+    injurySeverityImpact: {
+      intensity: "High",
+      explanation: "Documented loss of ability to perform prior leisure activities, work-related tasks, and independent self-care.",
+    },
+    jurisdictionAnalysis: {
+      venue: "Cook County, Illinois",
+      comparableCases: "Similar permanent functional impairments in comparable cases support a 1×–1.5× range.",
+      localTrend: "Established precedent in Illinois recognizes quality-of-life damages for permanent disability.",
+    },
+    negligenceViolations: {
+      breach: "Delayed medical intervention contributed to greater functional impairment than might otherwise have occurred.",
+      causation: "The breach directly caused permanent loss of independence in activities the plaintiff previously enjoyed.",
+      violations: "Standard care protocols were not followed in the initial assessment and treatment phases.",
+    },
+    recommendedRange: "1×–1.5×",
+    aiRecommendation: "Functional assessments support a 1×–1.5× multiplier for this category given the permanent nature of the impairment.",
+  },
+  "Cognitive Impairment": {
+    whyMultiplier: "Measurable neuropsychological deficits, particularly in memory and processing speed, justify a critical severity rating and higher multiplier.",
+    injuryProfile: {
+      affectedArea: "Neuropsychological / Cognitive Function",
+      injury: "Ischemic stroke causing measurable deficits in executive function, memory, and processing speed",
+    },
+    injurySeverityImpact: {
+      intensity: "Severe",
+      explanation: "Neuropsychological testing documents statistically significant cognitive decline affecting work performance and complex decision-making.",
+    },
+    jurisdictionAnalysis: {
+      venue: "Cook County, Illinois",
+      comparableCases: "Ischemic stroke cases with documented cognitive deficits typically support 2×–3× multipliers for cognitive impairment.",
+      localTrend: "Illinois courts heavily weight objective neuropsychological testing results in valuation.",
+    },
+    negligenceViolations: {
+      breach: "Failure to recognize and respond to acute neurological symptoms allowed the stroke to progress.",
+      causation: "Delayed intervention is directly linked to the extent and permanence of the cognitive deficits observed.",
+      violations: "Multiple protocol violations in emergency response and neurological assessment.",
+    },
+    recommendedRange: "2×–3×",
+    aiRecommendation: "Neuropsychological testing strongly supports a 2×–3× multiplier given the objective, measurable cognitive decline.",
+  },
+  "Physical Impairment": {
+    whyMultiplier: "Permanent restrictions in mobility and physical function, documented by imaging and clinical findings, justify a significant multiplier.",
+    injuryProfile: {
+      affectedArea: "Musculoskeletal / Mobility",
+      injury: "Permanent mobility restrictions and reduced range of motion requiring ongoing physical management",
+    },
+    injurySeverityImpact: {
+      intensity: "High",
+      explanation: "Imaging studies confirm structural changes and clinical examination verifies measurable, permanent limitations in physical capability.",
+    },
+    jurisdictionAnalysis: {
+      venue: "Cook County, Illinois",
+      comparableCases: "Comparable cases with permanent physical impairment support a 1×–1.5× multiplier.",
+      localTrend: "Illinois recognizes permanent physical impairment as a significant component of non-economic damages.",
+    },
+    negligenceViolations: {
+      breach: "Inadequate treatment protocols in the acute phase contributed to worsening of physical outcomes.",
+      causation: "The negligent care directly resulted in greater permanent impairment than appropriate standard care would have caused.",
+      violations: "Failure to follow evidence-based rehabilitation protocols in the acute recovery phase.",
+    },
+    recommendedRange: "1×–1.5×",
+    aiRecommendation: "Imaging and clinical findings support a 1×–1.5× multiplier for the documented permanent physical impairment.",
+  },
+  "Dignity & Independence": {
+    whyMultiplier: "Dependence on caregiving for self-care tasks represents a moderate but meaningful reduction in personal autonomy and dignity.",
+    injuryProfile: {
+      affectedArea: "Personal Autonomy / Activities of Daily Living",
+      injury: "Reduced ability to perform self-care activities independently, requiring assistive care",
+    },
+    injurySeverityImpact: {
+      intensity: "Moderate",
+      explanation: "While significant, the reliance on assistance for specific self-care tasks is measurable but managed through adaptive strategies.",
+    },
+    jurisdictionAnalysis: {
+      venue: "Cook County, Illinois",
+      comparableCases: "Comparable cases with moderate functional dependence support a 0.5×–1× range.",
+      localTrend: "Illinois courts recognize loss of dignity and independence as distinct from pain and suffering.",
+    },
+    negligenceViolations: {
+      breach: "Inadequate discharge planning and follow-up care contributed to preventable dependence.",
+      causation: "The negligent care limited the plaintiff's ability to regain independence as compared to appropriate rehabilitation.",
+      violations: "Failure to provide adequate supportive care planning during recovery.",
+    },
+    recommendedRange: "0.5×–1×",
+    aiRecommendation: "The documented need for assistive care supports a 0.5×–1× multiplier, reflecting moderate impact on autonomy.",
+  },
+  "Family Relationship Impact": {
+    whyMultiplier: "Documented impact on family dynamics and caregiver burden, though not permanent separation, justifies a moderate multiplier.",
+    injuryProfile: {
+      affectedArea: "Family / Interpersonal Relationships",
+      injury: "Altered family dynamics and increased caregiver responsibilities affecting household relationships",
+    },
+    injurySeverityImpact: {
+      intensity: "Moderate",
+      explanation: "Family statements and caregiver assessments document meaningful but manageable changes in household roles and relationships.",
+    },
+    jurisdictionAnalysis: {
+      venue: "Cook County, Illinois",
+      comparableCases: "Similar cases with documented caregiver burden support a 0.5×–1× multiplier.",
+      localTrend: "Illinois courts recognize loss of consortium and caregiver burden as compensable non-economic damages.",
+    },
+    negligenceViolations: {
+      breach: "The negligent care resulted in greater disability, increasing caregiving burden beyond what standard care would have produced.",
+      causation: "The severity of the plaintiff's condition—caused by the negligent care—directly caused the family impact.",
+      violations: "Inadequate consideration of rehabilitation needs contributed to prolonged family burden.",
+    },
+    recommendedRange: "0.5×–1×",
+    aiRecommendation: "Family documentation supports a 0.5×–1× multiplier for the caregiver burden and relationship impact.",
+  },
+};
+
+// Injury Intelligence data
+const injuryIntelligenceData = {
+  summary: "Severe neurological injury with permanent functional impairment",
+  findingCount: 7,
+  injuryProfile: {
+    affectedArea: "Brain / Neurological System",
+    injury: "Ischemic stroke",
+    condition: "Permanent neurological damage with right-sided hemiplegia",
+  },
+  severityImpact: {
+    intensity: "Severe",
+    condition: "Permanent neurological impairment",
+    shortTermImpact: [
+      "Acute neurological deterioration",
+      "Emergency hospitalization",
+      "Intensive medical treatment",
+    ],
+    longTermImpact: [
+      "Permanent functional limitations",
+      "Ongoing medical care",
+      "Significant loss of independence",
+    ],
+  },
+  treatingPhysician: {
+    name: "Dr. Sarah Mitchell",
+    title: "Neurologist",
+    specialization: "Vascular Neurology",
+    experience: "18 years",
+    hospital: "Northwestern Memorial Hospital",
+    hospitalLocation: "Chicago, Illinois",
+    hospitalType: "Metro / Tier-1 Medical Center",
+    role: "Treated the plaintiff following the ischemic stroke",
+  },
+  similarExperts: [
+    {
+      name: "Dr. Michael Chen",
+      matchPercentage: 92,
+      title: "Vascular Neurologist",
+      experience: "17 years",
+      hospital: "Rush University Medical Center",
+      hospitalLocation: "Chicago, Illinois",
+      expertise: ["Vascular Neurology", "Stroke Care", "Metro Hospital"],
+    },
+    {
+      name: "Dr. Emily Carter",
+      matchPercentage: 88,
+      title: "Neurologist",
+      experience: "20 years",
+      hospital: "University Medical Center",
+      hospitalLocation: "Chicago, Illinois",
+      expertise: ["Neurology", "Stroke Expertise", "Metro Hospital"],
+    },
+  ],
+};
+
+// Historic Case Benchmark data
+const historicCaseBenchmarkData = {
+  caseCount: 3,
+  precedentCase: {
+    matchPercentage: 94,
+    caseTitle: "Reyes v. Interstate Freight Lines",
+    jurisdiction: "Cook County, Illinois",
+    injuryType: "Cervical spine injury",
+    injuryIntensity: "Severe — permanent impairment",
+    settlementValue: 1750000,
+  },
+  similarityFactors: [
+    "Same Jurisdiction",
+    "Severe Injury",
+    "Strong Liability",
+    "Long-Term Impact",
+  ],
+  similarityExplanation: "High similarity based on jurisdiction, injury severity, liability profile, and long-term impact.",
+  negligenceLiability: {
+    liabilityStrength: "Strong",
+    primaryFinding: "Defendant's documented failure to meet the applicable standard of care contributed to the plaintiff's injury.",
+    jurisdiction: "Cook County, Illinois",
+    legalAuthority: "Illinois medical-malpractice requirements",
+    statuteCode: "735 ILCS 5/2-622",
+    legalRelevance: "The statute establishes procedural requirements for covered medical-malpractice actions, including review of the case by a qualified health professional and a written report supporting a reasonable and meritorious claim.",
+    violations: [
+      "Documented breach of applicable standard of care",
+      "Delayed treatment / response",
+      "Failure to follow applicable medical protocols",
+      "Supporting medical records identified",
+    ],
+  },
+};
 
 const baseEconomic = 161450;
 const baseMultiplier = 9;
@@ -152,6 +414,13 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
   const [multiplier, setMultiplier] = useState(baseMultiplier);
   // Damage Factors accordion — collapsed by default.
   const [damageFactorsOpen, setDamageFactorsOpen] = useState(false);
+  // Track which damage factor's reasoning panel is expanded (null means none)
+  const [expandedReasoningFactorIndex, setExpandedReasoningFactorIndex] = useState<number | null>(null);
+  // Track expanded state for new intelligence sections
+  const [expandedInjuryDetails, setExpandedInjuryDetails] = useState(false);
+  const [expandedSimilarDoctors, setExpandedSimilarDoctors] = useState(false);
+  const [expandedPrecedentCases, setExpandedPrecedentCases] = useState(false);
+  const [expandedLegalFramework, setExpandedLegalFramework] = useState(false);
   // Economic line items: which rows have their reasoning card expanded, the row
   // whose details drawer is open, and the preview/insights modal view.
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
@@ -370,21 +639,151 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
 
                     {damageFactorsOpen && (
                       <div className="border-t border-line divide-y divide-[#EAF1F4]">
-                        {damageFactors.map((f) => (
-                          <div key={f.category} className="px-4 py-3">
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="flex items-center gap-2 min-w-0 flex-wrap">
-                                <span className="text-sm font-semibold text-ink">{f.category}</span>
-                                <span className={SEVERITY_PILL[f.severity]}>{f.severity}</span>
+                        {damageFactors.map((f, idx) => {
+                          const isReasoningOpen = expandedReasoningFactorIndex === idx;
+                          const reasoning = damageFactorReasonings[f.category];
+                          return (
+                            <div key={f.category}>
+                              {/* Damage Factor Row */}
+                              <div className="px-4 py-4 flex gap-4">
+                                {/* LEFT: Factor name + severity badge + description */}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-1.5">
+                                    <span className="text-sm font-semibold text-ink">{f.category}</span>
+                                    <span className={SEVERITY_PILL[f.severity]}>{f.severity}</span>
+                                  </div>
+                                  <p className="secondary-text text-sm">{f.rationale}</p>
+                                </div>
+
+                                {/* RIGHT: Multiplier + MULTIPLIER label + View reasoning */}
+                                <div className="flex flex-col items-end justify-start shrink-0 gap-1.5">
+                                  <div className="text-right">
+                                    <div className="text-sm font-semibold text-ink tabular-nums">{SEVERITY_MULTIPLIER[f.severity]}</div>
+                                    <div className="text-[10px] uppercase tracking-wide text-[#8A98A3]">Multiplier</div>
+                                  </div>
+                                  <button
+                                    onClick={() => setExpandedReasoningFactorIndex(isReasoningOpen ? null : idx)}
+                                    className="inline-flex items-center gap-1 text-xs font-semibold text-deep hover:text-ink transition-colors whitespace-nowrap"
+                                  >
+                                    <Sparkles className="w-3.5 h-3.5" strokeWidth={2} />
+                                    View reasoning
+                                  </button>
+                                </div>
                               </div>
-                              <div className="text-right shrink-0">
-                                <div className="text-sm font-semibold text-ink tabular-nums">{SEVERITY_MULTIPLIER[f.severity]}</div>
-                                <div className="text-[10px] uppercase tracking-wide text-[#8A98A3]">Multiplier</div>
-                              </div>
+
+                              {/* Expanded reasoning panel */}
+                              {isReasoningOpen && reasoning && (
+                                <div className="px-4 py-3 bg-offwhite border-t border-[#EAF1F4]">
+                                  <div className="rounded-xl border border-line bg-white overflow-hidden flex flex-col">
+                                    {/* Sticky Header */}
+                                    <button
+                                      onClick={() => setExpandedReasoningFactorIndex(null)}
+                                      className="sticky top-0 z-10 w-full flex items-center justify-between gap-2 bg-white border-b border-line px-5 py-3 hover:bg-wash transition-colors"
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <Sparkles className="w-4 h-4 text-deep" strokeWidth={1.75} />
+                                        <h4 className="text-sm font-bold text-ink">AI Multiplier Analysis</h4>
+                                      </div>
+                                      <ChevronUp className="w-4 h-4 text-[#5B6B78]" strokeWidth={2} />
+                                    </button>
+
+                                    {/* Scrollable content */}
+                                    <div className="p-5 space-y-4 overflow-y-auto max-h-[500px]">
+                                      {/* Why this multiplier? */}
+                                      <div>
+                                        <p className="text-xs font-semibold text-[#5B6B78] uppercase tracking-wide mb-1.5">Why {SEVERITY_MULTIPLIER[f.severity]}?</p>
+                                        <p className="text-sm text-[#5B6B78] leading-relaxed">{reasoning.whyMultiplier}</p>
+                                      </div>
+
+                                      {/* Evidence sections */}
+                                      <div className="space-y-3.5 pt-2">
+                                        {/* Injury Profile */}
+                                        <div className="rounded-lg bg-[#F6FDFF] border border-[#D6F2F7] p-3">
+                                          <p className="text-xs font-bold text-deep uppercase tracking-wide mb-1.5">Injury Profile</p>
+                                          <div className="space-y-1.5">
+                                            <div className="text-xs">
+                                              <span className="font-semibold text-[#5B6B78]">Affected Area:</span>
+                                              <span className="text-[#5B6B78] ml-1">{reasoning.injuryProfile.affectedArea}</span>
+                                            </div>
+                                            <div className="text-xs">
+                                              <span className="font-semibold text-[#5B6B78]">Injury:</span>
+                                              <span className="text-[#5B6B78] ml-1">{reasoning.injuryProfile.injury}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {/* Injury Severity & Impact */}
+                                        <div className="rounded-lg bg-[#F6FDFF] border border-[#D6F2F7] p-3">
+                                          <p className="text-xs font-bold text-deep uppercase tracking-wide mb-1.5">Injury Severity & Impact</p>
+                                          <div className="space-y-1.5">
+                                            <div className="text-xs">
+                                              <span className="font-semibold text-[#5B6B78]">Intensity:</span>
+                                              <span className="text-[#5B6B78] ml-1">{reasoning.injurySeverityImpact.intensity}</span>
+                                            </div>
+                                            <div className="text-xs">
+                                              <span className="font-semibold text-[#5B6B78]">Explanation:</span>
+                                              <span className="text-[#5B6B78] ml-1">{reasoning.injurySeverityImpact.explanation}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {/* Jurisdiction Analysis */}
+                                        <div className="rounded-lg bg-[#F6FDFF] border border-[#D6F2F7] p-3">
+                                          <p className="text-xs font-bold text-deep uppercase tracking-wide mb-1.5">Jurisdiction Analysis</p>
+                                          <div className="space-y-1.5">
+                                            <div className="text-xs">
+                                              <span className="font-semibold text-[#5B6B78]">Venue:</span>
+                                              <span className="text-[#5B6B78] ml-1">{reasoning.jurisdictionAnalysis.venue}</span>
+                                            </div>
+                                            <div className="text-xs">
+                                              <span className="font-semibold text-[#5B6B78]">Comparable Cases:</span>
+                                              <span className="text-[#5B6B78] ml-1">{reasoning.jurisdictionAnalysis.comparableCases}</span>
+                                            </div>
+                                            <div className="text-xs">
+                                              <span className="font-semibold text-[#5B6B78]">Local Trend:</span>
+                                              <span className="text-[#5B6B78] ml-1">{reasoning.jurisdictionAnalysis.localTrend}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {/* Negligence & Violations */}
+                                        <div className="rounded-lg bg-[#F6FDFF] border border-[#D6F2F7] p-3">
+                                          <p className="text-xs font-bold text-deep uppercase tracking-wide mb-1.5">Negligence & Violations</p>
+                                          <div className="space-y-1.5">
+                                            <div className="text-xs">
+                                              <span className="font-semibold text-[#5B6B78]">Breach:</span>
+                                              <span className="text-[#5B6B78] ml-1">{reasoning.negligenceViolations.breach}</span>
+                                            </div>
+                                            <div className="text-xs">
+                                              <span className="font-semibold text-[#5B6B78]">Causation:</span>
+                                              <span className="text-[#5B6B78] ml-1">{reasoning.negligenceViolations.causation}</span>
+                                            </div>
+                                            <div className="text-xs">
+                                              <span className="font-semibold text-[#5B6B78]">Violations:</span>
+                                              <span className="text-[#5B6B78] ml-1">{reasoning.negligenceViolations.violations}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* Recommended Range */}
+                                      <div className="rounded-lg bg-tint border border-[#D6F2F7] p-3">
+                                        <p className="text-xs font-bold text-deep uppercase tracking-wide mb-1.5">Recommended Range</p>
+                                        <p className="text-sm font-bold text-ink tabular-nums">{reasoning.recommendedRange}</p>
+                                      </div>
+
+                                      {/* AI Recommendation */}
+                                      <div>
+                                        <p className="text-xs font-bold text-deep uppercase tracking-wide mb-1.5">AI Recommendation</p>
+                                        <p className="text-sm text-[#5B6B78] leading-relaxed italic">{reasoning.aiRecommendation}</p>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                            <p className="secondary-text mt-1">{f.rationale}</p>
-                          </div>
-                        ))}
+                          );
+                        })}
 
                         {/* Summary — combined factors → recommended multiplier → non-economic estimate */}
                         <div className="bg-tint px-4 py-3.5 space-y-2.5">
@@ -470,6 +869,385 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
                 </Button>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* ── INJURY INTELLIGENCE ── */}
+        <div className="lg-card p-6">
+          <div>
+            <h2 className="section-header mb-1">Injury Intelligence</h2>
+            <p className="secondary-text mb-4">Medical evidence and injury characteristics supporting the case valuation.</p>
+            
+            {/* Collapsed summary */}
+            {!expandedInjuryDetails && !expandedSimilarDoctors && (
+              <>
+                <p className="text-sm text-ink font-semibold mb-3">{injuryIntelligenceData.summary}</p>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  <span className="pill pill-neutral">Severe</span>
+                  <span className="pill pill-neutral">Neurological Injury</span>
+                  <span className="pill pill-neutral">Permanent Impairment</span>
+                </div>
+                <button
+                  onClick={() => setExpandedInjuryDetails(true)}
+                  className="text-sm text-deep hover:text-ink transition-colors inline-flex items-center gap-1 group"
+                >
+                  <span className="font-semibold">View injury details</span>
+                  <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" strokeWidth={2} />
+                </button>
+              </>
+            )}
+
+            {/* Expanded injury details */}
+            {expandedInjuryDetails && !expandedSimilarDoctors && (
+              <div className="mt-4 pt-4 border-t border-line space-y-6">
+                {/* Injury Profile */}
+                <div>
+                  <h3 className="card-title mb-3">Injury Profile</h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex gap-4">
+                      <span className="font-semibold text-[#5B6B78] w-24 shrink-0">Affected Area</span>
+                      <span className="text-ink">{injuryIntelligenceData.injuryProfile.affectedArea}</span>
+                    </div>
+                    <div className="flex gap-4">
+                      <span className="font-semibold text-[#5B6B78] w-24 shrink-0">Injury</span>
+                      <span className="text-ink">{injuryIntelligenceData.injuryProfile.injury}</span>
+                    </div>
+                    <div className="flex gap-4">
+                      <span className="font-semibold text-[#5B6B78] w-24 shrink-0">Condition</span>
+                      <span className="text-ink">{injuryIntelligenceData.injuryProfile.condition}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Severity & Impact */}
+                <div className="border-t border-line pt-6">
+                  <h3 className="card-title mb-3">Severity & Impact</h3>
+                  <div className="space-y-3 text-sm">
+                    <div className="flex gap-4">
+                      <span className="font-semibold text-[#5B6B78] w-24 shrink-0">Intensity</span>
+                      <span className="text-ink">{injuryIntelligenceData.severityImpact.intensity}</span>
+                    </div>
+                    <div className="flex gap-4">
+                      <span className="font-semibold text-[#5B6B78] w-24 shrink-0">Condition</span>
+                      <span className="text-ink">{injuryIntelligenceData.severityImpact.condition}</span>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-[#5B6B78] block mb-2">Short-Term Impact</span>
+                      <ul className="space-y-1 ml-2">
+                        {injuryIntelligenceData.severityImpact.shortTermImpact.map((item, idx) => (
+                          <li key={idx} className="text-ink flex gap-2">
+                            <span className="text-deep shrink-0">•</span>
+                            <span>{item}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-[#5B6B78] block mb-2">Long-Term Impact</span>
+                      <ul className="space-y-1 ml-2">
+                        {injuryIntelligenceData.severityImpact.longTermImpact.map((item, idx) => (
+                          <li key={idx} className="text-ink flex gap-2">
+                            <span className="text-deep shrink-0">•</span>
+                            <span>{item}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Treating Physician */}
+                <div className="border-t border-line pt-6">
+                  <h3 className="card-title mb-3">Treating Physician</h3>
+                  <div className="space-y-2 text-sm">
+                    <div>
+                      <div className="font-bold text-ink">{injuryIntelligenceData.treatingPhysician.name}</div>
+                      <div className="text-xs text-[#5B6B78]">{injuryIntelligenceData.treatingPhysician.title} · {injuryIntelligenceData.treatingPhysician.specialization}</div>
+                    </div>
+                    <div className="flex gap-4">
+                      <span className="font-semibold text-[#5B6B78] w-24 shrink-0">Experience</span>
+                      <span className="text-ink">{injuryIntelligenceData.treatingPhysician.experience}</span>
+                    </div>
+                    <div className="flex gap-4">
+                      <span className="font-semibold text-[#5B6B78] w-24 shrink-0">Hospital</span>
+                      <span className="text-ink">{injuryIntelligenceData.treatingPhysician.hospital}</span>
+                    </div>
+                    <div className="flex gap-4">
+                      <span className="font-semibold text-[#5B6B78] w-24 shrink-0">Location</span>
+                      <span className="text-ink">{injuryIntelligenceData.treatingPhysician.hospitalLocation}</span>
+                    </div>
+                    <div className="flex gap-4">
+                      <span className="font-semibold text-[#5B6B78] w-24 shrink-0">Role</span>
+                      <span className="text-ink">{injuryIntelligenceData.treatingPhysician.role}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Find similar doctors CTA */}
+                <div className="border-t border-line pt-6">
+                  <button
+                    onClick={() => setExpandedSimilarDoctors(true)}
+                    className="text-sm text-deep hover:text-ink transition-colors inline-flex items-center gap-1 group"
+                  >
+                    <span className="font-semibold">Find similar doctors</span>
+                    <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" strokeWidth={2} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Expanded similar doctors */}
+            {expandedSimilarDoctors && (
+              <div className="mt-4 pt-4 border-t border-line space-y-4">
+                {expandedInjuryDetails && (
+                  <div className="mb-4 pb-4 border-b border-line">
+                    <button
+                      onClick={() => setExpandedInjuryDetails(false)}
+                      className="text-sm text-deep hover:text-ink transition-colors inline-flex items-center gap-1 group"
+                    >
+                      <ArrowRight className="w-3.5 h-3.5 rotate-180 group-hover:-translate-x-0.5 transition-transform" strokeWidth={2} />
+                      <span className="font-semibold">Back to injury details</span>
+                    </button>
+                  </div>
+                )}
+                
+                <h3 className="card-title">Similar Medical Experts</h3>
+                <p className="secondary-text text-xs">Specialists identified based on specialization, clinical experience, injury expertise, hospital type, and hospital location.</p>
+                
+                <div className="space-y-3">
+                  {injuryIntelligenceData.similarExperts.map((expert, idx) => (
+                    <div key={idx} className="rounded-lg border border-line bg-offwhite p-3 text-sm">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div>
+                          <div className="font-bold text-ink">{expert.name}</div>
+                          <div className="text-xs text-[#5B6B78]">{expert.title}</div>
+                        </div>
+                        <div className="text-xs font-bold text-deep shrink-0">{expert.matchPercentage}% Match</div>
+                      </div>
+                      <div className="flex gap-4 text-xs mb-2">
+                        <div>
+                          <span className="font-semibold text-[#5B6B78]">{expert.experience}</span>
+                        </div>
+                        <div>
+                          <span className="text-[#5B6B78]">{expert.hospital}</span>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {expert.expertise.map((tag, t_idx) => (
+                          <span key={t_idx} className="inline-flex px-2 py-0.5 rounded-full bg-tint border border-[#D6F2F7] text-xs font-medium text-deep">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="rounded-lg bg-[#F6FDFF] border border-[#D6F2F7] p-3">
+                  <p className="text-xs text-[#5B6B78] italic">Supporting medical intelligence — does not affect the multiplier calculation.</p>
+                </div>
+
+                {(expandedInjuryDetails || expandedSimilarDoctors) && (
+                  <div className="pt-4 border-t border-line">
+                    <button
+                      onClick={() => {
+                        setExpandedInjuryDetails(false);
+                        setExpandedSimilarDoctors(false);
+                      }}
+                      className="inline-flex items-center gap-1 text-sm font-semibold text-deep hover:text-ink transition-colors"
+                    >
+                      <span>Collapse section</span>
+                      <span aria-hidden="true">⌃</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── PRECEDENT CASES ── */}
+        <div className="lg-card p-6">
+          <div>
+            <h2 className="section-header mb-1">Precedent Cases</h2>
+            <p className="secondary-text mb-4">Comparable cases that help benchmark the recommended valuation.</p>
+
+            {/* Collapsed state */}
+            {!expandedPrecedentCases && (
+              <>
+                <p className="text-sm text-ink font-semibold mb-3">Comparable cases based on jurisdiction, injury severity, liability, and long-term impact.</p>
+                <div className="flex items-center gap-3 mb-4">
+                  <span className="text-xs font-bold text-deep bg-tint border border-[#D6F2F7] rounded-full px-2.5 py-1">94% Highest Match</span>
+                  <span className="pill pill-neutral text-xs">{historicCaseBenchmarkData.caseCount} Comparable Cases</span>
+                </div>
+                <button
+                  onClick={() => setExpandedPrecedentCases(true)}
+                  className="text-sm text-deep hover:text-ink transition-colors inline-flex items-center gap-1 group"
+                >
+                  <span className="font-semibold">View precedent cases</span>
+                  <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" strokeWidth={2} />
+                </button>
+              </>
+            )}
+
+            {/* Expanded precedent cases */}
+            {expandedPrecedentCases && (
+              <div className="mt-4 pt-4 border-t border-line space-y-6">
+                {/* Primary Precedent Case */}
+                <div>
+                  <h3 className="card-title mb-3">Primary Precedent Case</h3>
+                  <div className="rounded-lg border border-line bg-offwhite p-4 space-y-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-bold text-deep bg-tint border border-[#D6F2F7] rounded-full px-2.5 py-1 inline-block mb-2">
+                          {historicCaseBenchmarkData.precedentCase.matchPercentage}% Match
+                        </div>
+                        <div className="text-sm font-bold text-ink">{historicCaseBenchmarkData.precedentCase.caseTitle}</div>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <span className="font-semibold text-[#5B6B78] text-xs">Jurisdiction</span>
+                        <div className="text-ink">{historicCaseBenchmarkData.precedentCase.jurisdiction}</div>
+                      </div>
+                      <div>
+                        <span className="font-semibold text-[#5B6B78] text-xs">Injury Type</span>
+                        <div className="text-ink">{historicCaseBenchmarkData.precedentCase.injuryType}</div>
+                      </div>
+                      <div className="col-span-2">
+                        <span className="font-semibold text-[#5B6B78] text-xs">Injury Intensity</span>
+                        <div className="text-ink">{historicCaseBenchmarkData.precedentCase.injuryIntensity}</div>
+                      </div>
+                    </div>
+                    <div className="border-t border-line pt-3">
+                      <span className="text-xs font-semibold text-[#5B6B78]">Settlement Value</span>
+                      <div className="text-lg font-bold text-ink tabular-nums">{formatCurrency(historicCaseBenchmarkData.precedentCase.settlementValue)}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Why This Case Matches */}
+                <div className="border-t border-line pt-6">
+                  <h3 className="card-title mb-3">Why This Case Matches</h3>
+                  <div className="space-y-2 text-sm">
+                    {historicCaseBenchmarkData.similarityFactors.map((factor, idx) => (
+                      <div key={idx} className="flex gap-3">
+                        <CheckCircle className="w-4 h-4 text-deep shrink-0 mt-0.5" strokeWidth={1.75} />
+                        <span className="text-ink">{factor}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-sm text-[#5B6B78] mt-3">{historicCaseBenchmarkData.similarityExplanation}</p>
+                </div>
+
+                {/* Similarity Score */}
+                <div className="border-t border-line pt-6">
+                  <h3 className="card-title mb-2">Similarity Score</h3>
+                  <div className="text-lg font-bold text-deep tabular-nums mb-2">{historicCaseBenchmarkData.precedentCase.matchPercentage}% Match</div>
+                  <p className="text-sm text-[#5B6B78]">High similarity based on jurisdiction, injury severity, liability profile, and long-term impact.</p>
+                </div>
+
+                {/* Negligence & Violations */}
+                <div className="border-t border-line pt-6">
+                  <h3 className="card-title mb-3">Negligence & Violations</h3>
+                  <div className="space-y-3 text-sm">
+                    <div className="flex gap-4">
+                      <span className="font-semibold text-[#5B6B78] w-32 shrink-0">Liability Strength</span>
+                      <span className="text-ink">{historicCaseBenchmarkData.negligenceLiability.liabilityStrength}</span>
+                    </div>
+                    <div className="flex gap-4">
+                      <span className="font-semibold text-[#5B6B78] w-32 shrink-0">Primary Finding</span>
+                      <span className="text-ink">{historicCaseBenchmarkData.negligenceLiability.primaryFinding}</span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => setExpandedLegalFramework(!expandedLegalFramework)}
+                    className="mt-3 text-sm text-deep hover:text-ink transition-colors inline-flex items-center gap-1 group"
+                  >
+                    <span className="font-semibold">View legal framework</span>
+                    <ArrowRight className={`w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform ${expandedLegalFramework ? "rotate-90" : ""}`} strokeWidth={2} />
+                  </button>
+
+                  {expandedLegalFramework && (
+                    <div className="mt-4 pt-4 border-t border-line space-y-3">
+                      <div className="text-sm space-y-2">
+                        <div className="flex gap-4">
+                          <span className="font-semibold text-[#5B6B78] w-32 shrink-0">Jurisdiction</span>
+                          <span className="text-ink">{historicCaseBenchmarkData.negligenceLiability.jurisdiction}</span>
+                        </div>
+                        <div className="flex gap-4">
+                          <span className="font-semibold text-[#5B6B78] w-32 shrink-0">Legal Authority</span>
+                          <span className="text-ink">{historicCaseBenchmarkData.negligenceLiability.legalAuthority}</span>
+                        </div>
+                        <div className="flex gap-4">
+                          <span className="font-semibold text-[#5B6B78] w-32 shrink-0">Statute / Code</span>
+                          <span className="text-ink">{historicCaseBenchmarkData.negligenceLiability.statuteCode}</span>
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-tint border border-[#D6F2F7] p-3">
+                        <div className="text-xs font-semibold text-deep mb-1">Legal Relevance</div>
+                        <p className="text-xs text-[#5B6B78]">{historicCaseBenchmarkData.negligenceLiability.legalRelevance}</p>
+                      </div>
+                      <div>
+                        <div className="text-xs font-semibold text-[#5B6B78] mb-2">Violations / Legal Findings</div>
+                        <ul className="space-y-1">
+                          {historicCaseBenchmarkData.negligenceLiability.violations.map((violation, idx) => (
+                            <li key={idx} className="text-xs text-ink flex gap-2">
+                              <span className="text-deep shrink-0">–</span>
+                              <span>{violation}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Other Comparable Cases */}
+                <div className="border-t border-line pt-6">
+                  <h3 className="card-title mb-3">Other Comparable Cases</h3>
+                  <div className="space-y-2">
+                    <div className="rounded-lg border border-line bg-offwhite p-3 text-sm">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div>
+                          <div className="font-semibold text-ink">Comparable Case Example</div>
+                          <div className="text-xs text-[#5B6B78]">Cook County, Illinois</div>
+                        </div>
+                        <div className="text-xs font-bold text-deep shrink-0">89% Match</div>
+                      </div>
+                      <div className="text-xs text-[#5B6B78]">Severe neurological injury · $1.42M</div>
+                    </div>
+                    <div className="rounded-lg border border-line bg-offwhite p-3 text-sm">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div>
+                          <div className="font-semibold text-ink">Comparable Case Example</div>
+                          <div className="text-xs text-[#5B6B78]">Illinois</div>
+                        </div>
+                        <div className="text-xs font-bold text-deep shrink-0">86% Match</div>
+                      </div>
+                      <div className="text-xs text-[#5B6B78]">Permanent neurological impairment · $1.28M</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg bg-[#F6FDFF] border border-[#D6F2F7] p-3">
+                  <p className="text-xs text-[#5B6B78] italic">Supporting evidence for valuation benchmarking — does not affect the multiplier calculation.</p>
+                </div>
+
+                {expandedPrecedentCases && (
+                  <div className="pt-4 border-t border-line">
+                    <button
+                      onClick={() => setExpandedPrecedentCases(false)}
+                      className="inline-flex items-center gap-1 text-sm font-semibold text-deep hover:text-ink transition-colors"
+                    >
+                      <span>Collapse section</span>
+                      <span aria-hidden="true">⌃</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
