@@ -3600,6 +3600,7 @@ type ComparableVerdict = {
   whyThisMatters: string;
   similarityBreakdown: { label: string; contribution: number; explanation: string }[];
   filterValues: Record<ComparableFilterKey, string>;
+  jurisdictionState: string;
 };
 
 const COMPARABLE_FILTERS: { key: ComparableFilterKey; label: string; allLabel: string }[] = [
@@ -3628,7 +3629,8 @@ export const COMPARABLE_VERDICTS: ComparableVerdict[] = [
       { label: "Long-Term Impact", contribution: 10, explanation: "Similar long-term medical impact" },
       { label: "Case Context", contribution: 8, explanation: "Comparable commercial vehicle matter" },
     ],
-    filterValues: { injuryType: "Cervical Injury", severity: "Ongoing Care", jurisdiction: "Cook County", violation: "Red-light violation", legalStatute: "Commercial vehicle", caseType: "Commercial Vehicle" },
+    filterValues: { injuryType: "Cervical Injury", severity: "Severe", jurisdiction: "Cook County", violation: "Red-light violation", legalStatute: "Commercial vehicle", caseType: "Commercial Vehicle" },
+    jurisdictionState: "Illinois",
   },
   {
     caseName: "Donovan v. Metro Cartage Co.",
@@ -3646,7 +3648,8 @@ export const COMPARABLE_VERDICTS: ComparableVerdict[] = [
       { label: "Long-Term Impact", contribution: 14, explanation: "Comparable recovery implications" },
       { label: "Case Context", contribution: 11, explanation: "Similar commercial-carrier crash" },
     ],
-    filterValues: { injuryType: "Delivery Vehicle Collision", severity: "Disputed Liability", jurisdiction: "Not specified", violation: "Failure to yield", legalStatute: "Officer fault", caseType: "Commercial Vehicle" },
+    filterValues: { injuryType: "Delivery Vehicle Collision", severity: "Moderate", jurisdiction: "Not specified", violation: "Failure to yield", legalStatute: "Officer fault", caseType: "Commercial Vehicle" },
+    jurisdictionState: "Illinois",
   },
   {
     caseName: "Whitfield v. Prairie Logistics",
@@ -3664,7 +3667,8 @@ export const COMPARABLE_VERDICTS: ComparableVerdict[] = [
       { label: "Long-Term Impact", contribution: 15, explanation: "Similar lasting medical impact" },
       { label: "Case Context", contribution: 10, explanation: "Similar policy-limit MVA context" },
     ],
-    filterValues: { injuryType: "Permanent Impairment", severity: "Permanent Impairment", jurisdiction: "Not specified", violation: "Policy-limit demand", legalStatute: "Policy-limit demand", caseType: "MVA" },
+    filterValues: { injuryType: "Permanent Impairment", severity: "Severe", jurisdiction: "Not specified", violation: "Policy-limit demand", legalStatute: "Policy-limit demand", caseType: "Motor Vehicle" },
+    jurisdictionState: "Illinois",
   },
 ];
 
@@ -3744,6 +3748,8 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
     legalStatute: "",
     caseType: "",
   });
+  const [draftJurisdictionState, setDraftJurisdictionState] = useState("");
+  const [jurisdictionState, setJurisdictionState] = useState("");
   const [caseFilters, setCaseFilters] = useState<Record<ComparableFilterKey, string>>({
     injuryType: "",
     severity: "",
@@ -3765,15 +3771,27 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
       ...Object.values(v.filterValues),
     ].join(" ").toLowerCase();
     const matchesSearch = !normalizedCaseSearch || searchableText.includes(normalizedCaseSearch);
-    const matchesFilters = COMPARABLE_FILTERS.every(({ key }) => !caseFilters[key] || v.filterValues[key] === caseFilters[key]);
+    const matchesFilters = COMPARABLE_FILTERS.every(({ key }) => {
+      const selected = caseFilters[key].trim().toLowerCase();
+      if (!selected) return true;
+      const value = v.filterValues[key].toLowerCase();
+      return ["injuryType", "violation", "legalStatute"].includes(key) ? value.includes(selected) : value === selected;
+    }) &&
+      (!jurisdictionState || v.jurisdictionState === jurisdictionState);
     return matchesSearch && matchesFilters;
   });
-  const hasCaseDiscovery = Boolean(normalizedCaseSearch || Object.values(caseFilters).some(Boolean));
+  const hasCaseDiscovery = Boolean(normalizedCaseSearch || Object.values(caseFilters).some(Boolean) || jurisdictionState);
   const activeCaseFilters = COMPARABLE_FILTERS.filter(({ key }) => caseFilters[key]);
+  const jurisdictionStates = [...new Set(COMPARABLE_VERDICTS.map((v) => v.jurisdictionState))];
+  const jurisdictionCounties = draftJurisdictionState
+    ? [...new Set(COMPARABLE_VERDICTS.filter((v) => v.jurisdictionState === draftJurisdictionState && v.filterValues.jurisdiction !== "Not specified").map((v) => v.filterValues.jurisdiction))]
+    : [];
   const clearCaseFilters = () => {
     const emptyFilters = { injuryType: "", severity: "", jurisdiction: "", violation: "", legalStatute: "", caseType: "" };
     setCaseFilters(emptyFilters);
     setDraftCaseFilters(emptyFilters);
+    setJurisdictionState("");
+    setDraftJurisdictionState("");
   };
 
   // Lock background scroll while the precedent drawer is open, so the dimmed
@@ -4365,22 +4383,89 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
           <div className="mb-5 rounded-lg border border-line bg-white p-4">
             <div className="eyebrow mb-3">Filter Cases</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {COMPARABLE_FILTERS.map(({ key, label, allLabel }) => {
-                const options = [...new Set(COMPARABLE_VERDICTS.map((v) => v.filterValues[key]))];
-                return (
-                  <label key={key} className="flex items-center gap-3 text-sm">
-                    <span className="text-[#5B6B78] min-w-28">{label}</span>
+              <label className="flex items-center gap-3 text-sm">
+                <span className="text-[#5B6B78] min-w-28">Injury Type</span>
+                <input
+                  value={draftCaseFilters.injuryType}
+                  onChange={(e) => setDraftCaseFilters((current) => ({ ...current, injuryType: e.target.value }))}
+                  placeholder="All injury types"
+                  className="min-w-0 flex-1 bg-white border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-[#5B6B78] focus:outline-none focus:border-brand transition-colors"
+                />
+              </label>
+
+              <label className="flex items-center gap-3 text-sm">
+                <span className="text-[#5B6B78] min-w-28">Severity</span>
+                <select
+                  value={draftCaseFilters.severity}
+                  onChange={(e) => setDraftCaseFilters((current) => ({ ...current, severity: e.target.value }))}
+                  className="min-w-0 flex-1 bg-white border border-line rounded-lg px-3 py-2 text-sm text-ink focus:outline-none focus:border-brand transition-colors"
+                >
+                  <option value="">All severity levels</option>
+                  {['Mild', 'Moderate', 'Severe', 'Critical'].map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </label>
+
+              <div className="flex flex-col gap-2 text-sm">
+                <label className="flex items-center gap-3">
+                  <span className="text-[#5B6B78] min-w-28">Jurisdiction</span>
+                  <select
+                    value={draftJurisdictionState}
+                    onChange={(e) => {
+                      setDraftJurisdictionState(e.target.value);
+                      setDraftCaseFilters((current) => ({ ...current, jurisdiction: "" }));
+                    }}
+                    className="min-w-0 flex-1 bg-white border border-line rounded-lg px-3 py-2 text-sm text-ink focus:outline-none focus:border-brand transition-colors"
+                  >
+                    <option value="">Select state</option>
+                    {jurisdictionStates.map((state) => <option key={state} value={state}>{state}</option>)}
+                  </select>
+                </label>
+                {draftJurisdictionState && (
+                  <label className="flex items-center gap-3 pl-[7.5rem]">
+                    <span className="sr-only">District / County</span>
                     <select
-                      value={draftCaseFilters[key]}
-                      onChange={(e) => setDraftCaseFilters((current) => ({ ...current, [key]: e.target.value }))}
+                      value={draftCaseFilters.jurisdiction}
+                      onChange={(e) => setDraftCaseFilters((current) => ({ ...current, jurisdiction: e.target.value }))}
                       className="min-w-0 flex-1 bg-white border border-line rounded-lg px-3 py-2 text-sm text-ink focus:outline-none focus:border-brand transition-colors"
                     >
-                      <option value="">{allLabel}</option>
-                      {options.map((option) => <option key={option} value={option}>{option}</option>)}
+                      <option value="">Select district / county</option>
+                      {jurisdictionCounties.map((county) => <option key={county} value={county}>{county}</option>)}
                     </select>
                   </label>
-                );
-              })}
+                )}
+              </div>
+
+              <label className="flex items-center gap-3 text-sm">
+                <span className="text-[#5B6B78] min-w-28">Violation</span>
+                <input
+                  value={draftCaseFilters.violation}
+                  onChange={(e) => setDraftCaseFilters((current) => ({ ...current, violation: e.target.value }))}
+                  placeholder="All violations"
+                  className="min-w-0 flex-1 bg-white border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-[#5B6B78] focus:outline-none focus:border-brand transition-colors"
+                />
+              </label>
+
+              <label className="flex items-center gap-3 text-sm">
+                <span className="text-[#5B6B78] min-w-28">Legal Statute</span>
+                <input
+                  value={draftCaseFilters.legalStatute}
+                  onChange={(e) => setDraftCaseFilters((current) => ({ ...current, legalStatute: e.target.value }))}
+                  placeholder="All statutes"
+                  className="min-w-0 flex-1 bg-white border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-[#5B6B78] focus:outline-none focus:border-brand transition-colors"
+                />
+              </label>
+
+              <label className="flex items-center gap-3 text-sm">
+                <span className="text-[#5B6B78] min-w-28">Case Type</span>
+                <select
+                  value={draftCaseFilters.caseType}
+                  onChange={(e) => setDraftCaseFilters((current) => ({ ...current, caseType: e.target.value }))}
+                  className="min-w-0 flex-1 bg-white border border-line rounded-lg px-3 py-2 text-sm text-ink focus:outline-none focus:border-brand transition-colors"
+                >
+                  <option value="">All case types</option>
+                  {['Personal Injury', 'Medical Malpractice', 'Motor Vehicle', 'Commercial Vehicle', 'Wrongful Death'].map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </label>
             </div>
             <div className="flex items-center justify-end gap-3 mt-4 pt-3 border-t border-line">
               <button
@@ -4392,7 +4477,7 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
               </button>
               <button
                 type="button"
-                onClick={() => { setCaseFilters(draftCaseFilters); setCaseFiltersOpen(false); }}
+                onClick={() => { setCaseFilters(draftCaseFilters); setJurisdictionState(draftJurisdictionState); setCaseFiltersOpen(false); }}
                 className="text-sm font-semibold text-deep hover:text-ink transition-colors"
               >
                 Apply filters
@@ -4401,10 +4486,24 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
           </div>
         )}
 
-        {activeCaseFilters.length > 0 && (
+        {(activeCaseFilters.length > 0 || jurisdictionState) && (
           <div className="mb-5">
             <div className="eyebrow mb-2">Active Filters</div>
             <div className="flex flex-wrap gap-2">
+              {jurisdictionState && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setJurisdictionState("");
+                    setDraftJurisdictionState("");
+                    setCaseFilters((current) => ({ ...current, jurisdiction: "" }));
+                    setDraftCaseFilters((current) => ({ ...current, jurisdiction: "" }));
+                  }}
+                  className="pill pill-neutral hover:text-deep transition-colors"
+                >
+                  {jurisdictionState} <span aria-hidden="true">×</span>
+                </button>
+              )}
               {activeCaseFilters.map(({ key, label }) => (
                 <button
                   key={key}
@@ -4497,12 +4596,9 @@ export function DemandPackageTab({ model, goTo, onGenerateDemand }: TabProps) {
                     <div className="space-y-2.5">
                       {v.similarityBreakdown.map((factor) => (
                         <div key={factor.label}>
-                          <div className="flex items-center justify-between gap-3 text-xs mb-1">
-                            <span className="text-[#5B6B78]">{factor.label}</span>
-                            <span className="font-semibold text-ink tabular-nums">{factor.contribution}%</span>
-                          </div>
+                              <div className="text-xs text-[#5B6B78] mb-1">{factor.label}</div>
                           <div className="h-1.5 rounded-full bg-wash overflow-hidden">
-                            <div className="h-full rounded-full bg-brand" style={{ width: `${factor.contribution}%` }} />
+                                <div className="h-full rounded-full bg-brand" style={{ width: `${Math.min(100, factor.contribution * 3.5)}%` }} />
                           </div>
                         </div>
                       ))}
