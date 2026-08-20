@@ -67,6 +67,22 @@ const damageFactors: { category: string; severity: "Critical" | "High" | "Modera
   { category: "Family Relationship Impact", severity: "Moderate", rationale: "Family statements document caregiving burden and loss of consortium within the household." },
 ];
 
+const multiplierPrecedentCases = [
+  { caseName: "Reyes v. Interstate Freight Lines", matchScore: 94, settlementValue: 1_750_000, analysis: ["Similar injury severity and permanent impairment", "Comparable long-term functional impact", "Comparable liability profile", "Settlement value provides a useful valuation reference"] },
+  { caseName: "Donovan v. Metro Cartage Co.", matchScore: 89, settlementValue: 1_420_000, analysis: ["Comparable injury and ongoing care profile", "Similar commercial-carrier liability context", "Settlement value supports the selected valuation range"] },
+  { caseName: "Whitfield v. Prairie Logistics", matchScore: 85, settlementValue: 1_180_000, analysis: ["Permanent impairment provides a relevant severity comparison", "Comparable long-term medical impact", "Settlement value helps anchor the lower end of the range"] },
+];
+
+const precedentValuationRelevance: Record<string, string> = {
+  "Pain & Suffering": "Comparable precedent settlements support positioning this factor within the 2×–3× range, with the upper end supported by the persistent suffering and lasting impact observed in similar matters.",
+  "Emotional Distress": "Comparable outcomes provide supporting context for the 1×–1.5× range, particularly where ongoing treatment and documented psychological effects are present.",
+  "Quality of Life": "The historical settlement range supports the 1×–1.5× positioning because comparable matters reflect lasting limitations and reduced independence.",
+  "Cognitive Impairment": "Comparable precedent settlements support the 2×–3× range, with severe, objectively documented functional effects supporting the upper end.",
+  "Physical Impairment": "The precedent range supports the selected multiplier by showing how permanent mobility restrictions and ongoing care influence valuation.",
+  "Dignity & Independence": "Comparable settlements provide supporting context for the selected range where lasting dependence affects everyday autonomy.",
+  "Family Relationship Impact": "The historical outcomes support the selected range where lasting impairment creates a documented caregiving and relationship burden.",
+};
+
 // AI Multiplier Analysis reasoning for each damage factor
 interface DamageFactorReasoning {
   whyMultiplier: string;
@@ -727,41 +743,72 @@ export function ValuationPage({ caseData, analysisFindings = [], onStageClick, o
                                           </div>
                                         </div>
 
-                                        {/* Jurisdiction Analysis */}
-                                        <div className="rounded-lg bg-[#F6FDFF] border border-[#D6F2F7] p-3">
-                                          <p className="text-xs font-bold text-deep uppercase tracking-wide mb-1.5">Jurisdiction Analysis</p>
-                                          <div className="space-y-1.5">
-                                            <div className="text-xs">
-                                              <span className="font-semibold text-[#5B6B78]">Venue:</span>
-                                              <span className="text-[#5B6B78] ml-1">{reasoning.jurisdictionAnalysis.venue}</span>
-                                            </div>
-                                            <div className="text-xs">
-                                              <span className="font-semibold text-[#5B6B78]">Comparable Cases:</span>
-                                              <span className="text-[#5B6B78] ml-1">{reasoning.jurisdictionAnalysis.comparableCases}</span>
-                                            </div>
-                                            <div className="text-xs">
-                                              <span className="font-semibold text-[#5B6B78]">Local Trend:</span>
-                                              <span className="text-[#5B6B78] ml-1">{reasoning.jurisdictionAnalysis.localTrend}</span>
+                                        {/* Precedent Case Analysis */}
+                                        <div className="rounded-lg bg-[#F6FDFF] border border-[#D6F2F7] p-3 space-y-4">
+                                          <p className="text-xs font-bold text-deep uppercase tracking-wide">Precedent Case Analysis</p>
+
+                                          <div>
+                                            <p className="text-xs font-semibold text-[#5B6B78] uppercase tracking-wide mb-2">Precedent Cases Considered</p>
+                                            <div className="space-y-2.5">
+                                              {multiplierPrecedentCases.map((precedent) => (
+                                                <div key={precedent.caseName} className="flex items-start justify-between gap-3 text-xs">
+                                                  <span className="font-semibold text-[#5B6B78]">{precedent.caseName}</span>
+                                                  <span className="text-right shrink-0 text-[#5B6B78]">
+                                                    <span className="font-semibold text-deep">{precedent.matchScore}% Match</span>
+                                                    <span className="block">Settlement Value: {formatCurrency(precedent.settlementValue)}</span>
+                                                  </span>
+                                                </div>
+                                              ))}
                                             </div>
                                           </div>
-                                        </div>
 
-                                        {/* Negligence & Violations */}
-                                        <div className="rounded-lg bg-[#F6FDFF] border border-[#D6F2F7] p-3">
-                                          <p className="text-xs font-bold text-deep uppercase tracking-wide mb-1.5">Negligence & Violations</p>
-                                          <div className="space-y-1.5">
-                                            <div className="text-xs">
-                                              <span className="font-semibold text-[#5B6B78]">Breach:</span>
-                                              <span className="text-[#5B6B78] ml-1">{reasoning.negligenceViolations.breach}</span>
+                                          <div className="border-t border-[#D6F2F7] pt-3">
+                                            <p className="text-xs font-semibold text-[#5B6B78] uppercase tracking-wide mb-2">Historical Settlement Outcomes</p>
+                                            <div className="flex items-center justify-between gap-2 text-xs font-bold text-ink tabular-nums">
+                                              {multiplierPrecedentCases.map((precedent) => <span key={precedent.caseName}>{formatCompactUSD(precedent.settlementValue)}</span>)}
                                             </div>
-                                            <div className="text-xs">
-                                              <span className="font-semibold text-[#5B6B78]">Causation:</span>
-                                              <span className="text-[#5B6B78] ml-1">{reasoning.negligenceViolations.causation}</span>
+                                            <div className="mt-2 text-xs text-[#5B6B78]">
+                                              <span className="font-semibold">Historical Range:</span> {formatCompactUSD(Math.min(...multiplierPrecedentCases.map((precedent) => precedent.settlementValue)))} – {formatCompactUSD(Math.max(...multiplierPrecedentCases.map((precedent) => precedent.settlementValue)))}
                                             </div>
-                                            <div className="text-xs">
-                                              <span className="font-semibold text-[#5B6B78]">Violations:</span>
-                                              <span className="text-[#5B6B78] ml-1">{reasoning.negligenceViolations.violations}</span>
+                                          </div>
+
+                                          <div className="border-t border-[#D6F2F7] pt-3">
+                                            <p className="text-xs font-semibold text-[#5B6B78] uppercase tracking-wide mb-2">Settlement & Multiplier Context</p>
+                                            <div className="space-y-2">
+                                              {multiplierPrecedentCases.map((precedent) => (
+                                                <div key={precedent.caseName} className="text-xs text-[#5B6B78]">
+                                                  <div className="font-semibold text-ink">{precedent.caseName}</div>
+                                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-x-3 gap-y-1 mt-1">
+                                                    <span>Settlement Value: {formatCurrency(precedent.settlementValue)}</span>
+                                                    <span>Economic damages data unavailable</span>
+                                                    <span>Implied multiplier not calculated</span>
+                                                  </div>
+                                                </div>
+                                              ))}
                                             </div>
+                                          </div>
+
+                                          <div className="border-t border-[#D6F2F7] pt-3">
+                                            <p className="text-xs font-semibold text-[#5B6B78] uppercase tracking-wide mb-2">Case-Level Analysis</p>
+                                            <div className="space-y-3">
+                                              {multiplierPrecedentCases.map((precedent) => (
+                                                <div key={precedent.caseName}>
+                                                  <p className="text-xs font-semibold text-ink mb-1">{precedent.caseName}</p>
+                                                  <ul className="space-y-1">
+                                                    {precedent.analysis.map((item) => (
+                                                      <li key={item} className="text-xs text-[#5B6B78] flex items-start gap-1.5">
+                                                        <span className="text-deep">•</span><span>{item}</span>
+                                                      </li>
+                                                    ))}
+                                                  </ul>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+
+                                          <div className="border-t border-[#D6F2F7] pt-3">
+                                            <p className="text-xs font-semibold text-[#5B6B78] uppercase tracking-wide mb-1.5">Valuation Relevance</p>
+                                            <p className="text-xs text-[#5B6B78] leading-relaxed">{precedentValuationRelevance[f.category]}</p>
                                           </div>
                                         </div>
                                       </div>
