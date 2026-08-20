@@ -11,6 +11,7 @@ import type { AnalysisFinding, CaseDocument } from "../types/case";
 import { classifyDocuments } from "../types/case";
 import { DocumentWorkspaceModal } from "../components/DocumentWorkspace";
 import { EvidenceReviewModal } from "./EvidenceReviewModal";
+import { InjuryIntelligenceSection } from "../components/InjuryIntelligenceSection";
 
 // ── Shared model & helpers ────────────────────────────────────────────────────
 
@@ -1266,6 +1267,8 @@ export function MedicalTimelineTab({ documents, goTo }: TabProps) {
         })}
       </div>
       )}
+
+      {subTab === "medical" && <InjuryIntelligenceSection />}
 
       </div>
 
